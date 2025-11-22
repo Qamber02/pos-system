@@ -104,6 +104,53 @@ export type Database = {
         }
         Relationships: []
       }
+      product_variants: {
+        Row: {
+          barcode: string | null
+          cost_price: number | null
+          created_at: string | null
+          id: string
+          name: string
+          product_id: string
+          retail_price: number
+          stock_quantity: number | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          barcode?: string | null
+          cost_price?: number | null
+          created_at?: string | null
+          id?: string
+          name: string
+          product_id: string
+          retail_price: number
+          stock_quantity?: number | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          barcode?: string | null
+          cost_price?: number | null
+          created_at?: string | null
+          id?: string
+          name?: string
+          product_id?: string
+          retail_price?: number
+          stock_quantity?: number | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_variants_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       products: {
         Row: {
           barcode: string | null
