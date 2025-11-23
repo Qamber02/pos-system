@@ -44,6 +44,65 @@ export type Database = {
         }
         Relationships: []
       }
+      customer_loans: {
+        Row: {
+          amount_paid: number | null
+          created_at: string | null
+          customer_id: string | null
+          due_date: string | null
+          id: string
+          lastmodified: number | null
+          loan_amount: number
+          loan_date: string | null
+          notes: string | null
+          remaining_balance: number | null
+          status: string | null
+          synced: boolean | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          amount_paid?: number | null
+          created_at?: string | null
+          customer_id?: string | null
+          due_date?: string | null
+          id?: string
+          lastmodified?: number | null
+          loan_amount: number
+          loan_date?: string | null
+          notes?: string | null
+          remaining_balance?: number | null
+          status?: string | null
+          synced?: boolean | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          amount_paid?: number | null
+          created_at?: string | null
+          customer_id?: string | null
+          due_date?: string | null
+          id?: string
+          lastmodified?: number | null
+          loan_amount?: number
+          loan_date?: string | null
+          notes?: string | null
+          remaining_balance?: number | null
+          status?: string | null
+          synced?: boolean | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "customer_loans_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       customers: {
         Row: {
           address: string | null
@@ -111,11 +170,14 @@ export type Database = {
           created_at: string | null
           id: string
           name: string
+          price_adjustment: number | null
           product_id: string
           retail_price: number
+          sku: string | null
           stock_quantity: number | null
           updated_at: string | null
           user_id: string
+          variant_name: string
         }
         Insert: {
           barcode?: string | null
@@ -123,11 +185,14 @@ export type Database = {
           created_at?: string | null
           id?: string
           name: string
+          price_adjustment?: number | null
           product_id: string
           retail_price: number
+          sku?: string | null
           stock_quantity?: number | null
           updated_at?: string | null
           user_id: string
+          variant_name: string
         }
         Update: {
           barcode?: string | null
@@ -135,11 +200,14 @@ export type Database = {
           created_at?: string | null
           id?: string
           name?: string
+          price_adjustment?: number | null
           product_id?: string
           retail_price?: number
+          sku?: string | null
           stock_quantity?: number | null
           updated_at?: string | null
           user_id?: string
+          variant_name?: string
         }
         Relationships: [
           {
