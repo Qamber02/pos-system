@@ -55,11 +55,13 @@ export type Database = {
           loan_amount: number
           loan_date: string | null
           notes: string | null
+          product_id: string | null
           remaining_balance: number | null
           status: string | null
           synced: boolean | null
           updated_at: string | null
           user_id: string | null
+          variant_id: string | null
         }
         Insert: {
           amount_paid?: number | null
@@ -71,11 +73,13 @@ export type Database = {
           loan_amount: number
           loan_date?: string | null
           notes?: string | null
+          product_id?: string | null
           remaining_balance?: number | null
           status?: string | null
           synced?: boolean | null
           updated_at?: string | null
           user_id?: string | null
+          variant_id?: string | null
         }
         Update: {
           amount_paid?: number | null
@@ -87,11 +91,13 @@ export type Database = {
           loan_amount?: number
           loan_date?: string | null
           notes?: string | null
+          product_id?: string | null
           remaining_balance?: number | null
           status?: string | null
           synced?: boolean | null
           updated_at?: string | null
           user_id?: string | null
+          variant_id?: string | null
         }
         Relationships: [
           {
@@ -99,6 +105,20 @@ export type Database = {
             columns: ["customer_id"]
             isOneToOne: false
             referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "customer_loans_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "customer_loans_variant_id_fkey"
+            columns: ["variant_id"]
+            isOneToOne: false
+            referencedRelation: "product_variants"
             referencedColumns: ["id"]
           },
         ]
@@ -169,6 +189,7 @@ export type Database = {
           cost_price: number | null
           created_at: string | null
           id: string
+          is_active: boolean | null
           name: string
           price_adjustment: number | null
           product_id: string
@@ -184,6 +205,7 @@ export type Database = {
           cost_price?: number | null
           created_at?: string | null
           id?: string
+          is_active?: boolean | null
           name: string
           price_adjustment?: number | null
           product_id: string
@@ -199,6 +221,7 @@ export type Database = {
           cost_price?: number | null
           created_at?: string | null
           id?: string
+          is_active?: boolean | null
           name?: string
           price_adjustment?: number | null
           product_id?: string
