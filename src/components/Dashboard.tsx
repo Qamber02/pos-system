@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DollarSign, ShoppingBag, TrendingUp, Package } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 
 interface DashboardStats {
   totalSales: number;
@@ -67,9 +68,7 @@ export const Dashboard = () => {
     fetchStats();
   }, []);
 
-  const formatCurrency = (amount: number) => {
-    return `PKR ${amount.toFixed(2)}`;
-  };
+  const formatCurrency = useFormatCurrency();
 
   const statCards = [
     {

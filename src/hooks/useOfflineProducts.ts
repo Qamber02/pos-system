@@ -1,39 +1,87 @@
-import { useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
-// We no longer need Supabase here
+import { db, CachedProduct } from '@/lib/db';
 import { syncService } from '@/lib/syncService';
 
-export function useOfflineProducts() {
-  
-  // 1. Get products from IndexedDB using useLiveQuery.
-  // This hook automatically updates when the db changes.
-  // `cachedProducts` will be `undefined` on the first render,
-  // then it will become an array.
-  const cachedProducts = useLiveQuery(
-    () => db.products.toArray()
-  );
+/**
+ * An optimized hook to get products from the local database.
+ * It applies search and category filters *inside* the query
+ * and accepts a 'limit' for pagination.
+ * Now includes full CRUD operations with sync queue integration.
+ */
+export function useOfflineProducts(
+  searchQuery: string,
+  selectedCategory: string | null,
+  limit: number
+) {
 
-  // 2. This useEffect just starts and stops the background sync service.
-  useEffect(() => {
-    // Start the service. It will automatically run `syncAll()`
-    // and populate/update the db. `useLiveQuery` will
-    // catch those changes and re-render the component.
-    syncService.startAutoSync();
+  const products = useLiveQuery(() => {
+    // This is a dynamic query. It builds itself based on the filters.
 
-    // Return a cleanup function to stop the service
-    // when the component unmounts.
-    return () => {
-      syncService.stopAutoSync();
+    // 1. Start with a collection
+    let query;
+
+    // 2. Apply category filter first (uses an index, very fast)
+    if (selectedCategory) {
+      query = db.products.where('category_id').equals(selectedCategory);
+    } else {
+      // No category, start with the whole table
+      query = db.products.toCollection();
+    }
+
+    // 3. Apply search filter
+    if (searchQuery) {
+      const lowerSearch = searchQuery.toLowerCase();
+
+      // .filter() is Dexie's way of running a JS filter on the results.
+      query = query.filter(product =>
+        product.name.toLowerCase().includes(lowerSearch)
+      );
+    }
+
+    // 4. Apply the dynamic limit and sort
+    return query.limit(limit).sortBy('name');
+
+  }, [searchQuery, selectedCategory, limit]); // Rerun this query when filters or limit change
+
+  // CRUD operations
+  const createProduct = async (product: Omit<CachedProduct, 'id' | 'synced' | 'lastModified'>) => {
+    const newProduct: CachedProduct = {
+      ...product,
+      id: crypto.randomUUID(),
+      synced: false,
+      lastModified: Date.now(),
+      updated_at: new Date().toISOString()
     };
-  }, []); // Runs only once when the hook is mounted
 
-  // 3. Return the products.
-  // The loading state is true only if `cachedProducts` is still undefined.
+    await syncService.queueOperation('products', 'insert', newProduct);
+    return newProduct;
+  };
+
+  const updateProduct = async (id: string, updates: Partial<CachedProduct>) => {
+    const existing = await db.products.get(id);
+    if (!existing) throw new Error('Product not found');
+
+    const updated: CachedProduct = {
+      ...existing,
+      ...updates,
+      synced: false,
+      lastModified: Date.now(),
+      updated_at: new Date().toISOString()
+    };
+
+    await syncService.queueOperation('products', 'update', updated);
+    return updated;
+  };
+
+  const deleteProduct = async (id: string) => {
+    await syncService.queueOperation('products', 'delete', { id });
+  };
+
   return {
-    products: cachedProducts || [],
-    loading: cachedProducts === undefined,
-    // We no longer return `isOnline` because it was unreliable and
-    // the UI should not depend on it.
+    products: products || [],
+    loading: products === undefined,
+    createProduct,
+    updateProduct,
+    deleteProduct
   };
 }

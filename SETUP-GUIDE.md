@@ -13,8 +13,8 @@ Your POS SHOPPING app now has:
 
 ### Current Architecture
 - **Frontend**: React + TypeScript (runs in browser or Electron)
-- **Backend**: Lovable Cloud (Supabase) - **requires internet**
-- **Database**: PostgreSQL (cloud-based via Lovable Cloud)
+- **Backend**:  Supabase - **requires internet**
+- **Database**: PostgreSQL Supabase
 
 ### About XAMPP
 ❌ **XAMPP won't work** with this Electron app because:

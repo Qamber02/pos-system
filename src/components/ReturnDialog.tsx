@@ -1,15 +1,23 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Loader2, Search } from "lucide-react";
+import { Loader2, Search, AlertTriangle } from "lucide-react";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
+import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 
 interface ReturnDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+}
+
+interface ReturnItemState {
+  selected: boolean;
+  returnQuantity: number;
 }
 
 export const ReturnDialog = ({ open, onOpenChange }: ReturnDialogProps) => {
@@ -17,6 +25,9 @@ export const ReturnDialog = ({ open, onOpenChange }: ReturnDialogProps) => {
   const [sale, setSale] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
+
+  // Map of sale_item_id -> { selected, returnQuantity }
+  const [returnItems, setReturnItems] = useState<Record<string, ReturnItemState>>({});
 
   const handleSearch = async () => {
     if (!receiptNumber.trim()) {
@@ -43,13 +54,23 @@ export const ReturnDialog = ({ open, onOpenChange }: ReturnDialogProps) => {
         .single();
 
       if (error) throw error;
-      
+
       if (!data) {
         toast.error("Sale not found");
         return;
       }
 
+      // Initialize return state for all items
+      const initialReturnState: Record<string, ReturnItemState> = {};
+      data.sale_items.forEach((item: any) => {
+        initialReturnState[item.id] = {
+          selected: false,
+          returnQuantity: item.quantity
+        };
+      });
+
       setSale(data);
+      setReturnItems(initialReturnState);
       toast.success("Sale found");
     } catch (error: any) {
       console.error("Error finding sale:", error);
@@ -60,47 +81,101 @@ export const ReturnDialog = ({ open, onOpenChange }: ReturnDialogProps) => {
     }
   };
 
+  const toggleItemSelection = (itemId: string, checked: boolean) => {
+    setReturnItems(prev => ({
+      ...prev,
+      [itemId]: {
+        ...prev[itemId],
+        selected: checked
+      }
+    }));
+  };
+
+  const updateReturnQuantity = (itemId: string, quantity: number, maxQuantity: number) => {
+    // Ensure quantity is valid (1 to max)
+    const validQuantity = Math.max(1, Math.min(quantity, maxQuantity));
+    setReturnItems(prev => ({
+      ...prev,
+      [itemId]: {
+        ...prev[itemId],
+        returnQuantity: validQuantity
+      }
+    }));
+  };
+
+  const calculateRefundTotal = () => {
+    if (!sale) return 0;
+    let total = 0;
+    sale.sale_items.forEach((item: any) => {
+      const state = returnItems[item.id];
+      if (state?.selected) {
+        // Calculate proportional refund based on unit price
+        // Note: This assumes no complex discounts per item. 
+        // If there was a global discount, we might need to adjust.
+        // For now, using unit_price * returnQuantity is safe.
+        total += Number(item.unit_price) * state.returnQuantity;
+      }
+    });
+    return total;
+  };
+
   const handleReturn = async () => {
     if (!sale) return;
+
+    const itemsToReturn = sale.sale_items.filter((item: any) => returnItems[item.id]?.selected);
+
+    if (itemsToReturn.length === 0) {
+      toast.error("Please select at least one item to return");
+      return;
+    }
+
+    if (!confirm(`Process refund of ${formatCurrency(calculateRefundTotal())}?`)) {
+      return;
+    }
 
     setProcessing(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("User not authenticated");
 
-      // Create a return/refund record by inserting a negative sale
-      const returnReceiptNumber = `RTN-${sale.receipt_number}`;
-      
+      const refundTotal = calculateRefundTotal();
+      const returnReceiptNumber = `RTN-${sale.receipt_number}-${Date.now().toString().slice(-4)}`;
+
+      // 1. Create Return Sale Record
       const { data: returnSale, error: returnError } = await supabase
         .from("sales")
         .insert({
           receipt_number: returnReceiptNumber,
           customer_id: sale.customer_id,
-          subtotal: -sale.subtotal,
-          discount_amount: -sale.discount_amount,
-          tax_amount: -sale.tax_amount,
-          total_amount: -sale.total_amount,
+          subtotal: -refundTotal,
+          discount_amount: 0, // Simplified for partial returns
+          tax_amount: 0,      // Simplified
+          total_amount: -refundTotal,
           payment_method: sale.payment_method,
-          amount_paid: -sale.total_amount,
+          amount_paid: -refundTotal,
           change_amount: 0,
           user_id: user.id,
-          notes: `Return for ${sale.receipt_number}`,
+          notes: `Partial Return for ${sale.receipt_number}`,
         })
         .select()
         .single();
 
       if (returnError) throw returnError;
 
-      // Create return items and restore stock
-      for (const item of sale.sale_items) {
+      // 2. Create Return Items and Restore Stock
+      for (const item of itemsToReturn) {
+        const state = returnItems[item.id];
+        const qtyToReturn = state.returnQuantity;
+        const refundAmount = Number(item.unit_price) * qtyToReturn;
+
         // Insert negative sale item
         await supabase.from("sale_items").insert({
           sale_id: returnSale.id,
           product_id: item.product_id,
           product_name: item.product_name,
-          quantity: -item.quantity,
+          quantity: -qtyToReturn,
           unit_price: item.unit_price,
-          subtotal: -item.subtotal,
+          subtotal: -refundAmount,
         });
 
         // Restore stock
@@ -114,16 +189,17 @@ export const ReturnDialog = ({ open, onOpenChange }: ReturnDialogProps) => {
           if (product) {
             await supabase
               .from("products")
-              .update({ stock_quantity: product.stock_quantity + Math.abs(item.quantity) })
+              .update({ stock_quantity: product.stock_quantity + qtyToReturn })
               .eq("id", item.product_id);
           }
         }
       }
 
-      toast.success(`Return processed! Return receipt: ${returnReceiptNumber}`);
+      toast.success(`Return processed! Refund: ${formatCurrency(refundTotal)}`);
       onOpenChange(false);
       setReceiptNumber("");
       setSale(null);
+      setReturnItems({});
     } catch (error: any) {
       console.error("Error processing return:", error);
       toast.error("Error processing return: " + error.message);
@@ -132,13 +208,11 @@ export const ReturnDialog = ({ open, onOpenChange }: ReturnDialogProps) => {
     }
   };
 
-  const formatCurrency = (amount: number) => {
-    return `PKR ${amount.toFixed(2)}`;
-  };
+  const formatCurrency = useFormatCurrency();
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="sm:max-w-[700px]">
         <DialogHeader>
           <DialogTitle>Process Return</DialogTitle>
           <DialogDescription>
@@ -163,44 +237,79 @@ export const ReturnDialog = ({ open, onOpenChange }: ReturnDialogProps) => {
           </div>
 
           {sale && (
-            <div className="space-y-4 p-4 border rounded-lg bg-muted/50">
-              <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="space-y-4">
+              <div className="p-4 border rounded-lg bg-muted/50 grid grid-cols-3 gap-4 text-sm">
                 <div>
                   <p className="text-muted-foreground">Receipt</p>
                   <p className="font-medium">{sale.receipt_number}</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Date</p>
-                  <p className="font-medium">
-                    {new Date(sale.created_at).toLocaleDateString()}
-                  </p>
+                  <p className="font-medium">{new Date(sale.created_at).toLocaleDateString()}</p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground">Payment Method</p>
-                  <p className="font-medium capitalize">{sale.payment_method}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Total</p>
-                  <p className="font-medium text-lg">{formatCurrency(sale.total_amount)}</p>
+                  <p className="text-muted-foreground">Original Total</p>
+                  <p className="font-medium">{formatCurrency(sale.total_amount)}</p>
                 </div>
               </div>
 
-              <div>
-                <p className="font-semibold mb-2">Items</p>
-                <div className="space-y-2">
-                  {sale.sale_items?.map((item: any, idx: number) => (
-                    <div key={idx} className="flex justify-between text-sm p-2 bg-background rounded">
-                      <span>{item.product_name} x{item.quantity}</span>
-                      <span className="font-medium">{formatCurrency(item.subtotal)}</span>
-                    </div>
-                  ))}
-                </div>
+              <div className="border rounded-lg overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[50px]">Select</TableHead>
+                      <TableHead>Product</TableHead>
+                      <TableHead>Price</TableHead>
+                      <TableHead>Qty Sold</TableHead>
+                      <TableHead className="w-[100px]">Return Qty</TableHead>
+                      <TableHead className="text-right">Refund</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {sale.sale_items?.map((item: any) => {
+                      const state = returnItems[item.id] || { selected: false, returnQuantity: item.quantity };
+                      const refundAmount = Number(item.unit_price) * state.returnQuantity;
+
+                      return (
+                        <TableRow key={item.id} className={state.selected ? "bg-muted/30" : ""}>
+                          <TableCell>
+                            <Checkbox
+                              checked={state.selected}
+                              onCheckedChange={(checked) => toggleItemSelection(item.id, checked as boolean)}
+                            />
+                          </TableCell>
+                          <TableCell className="font-medium">{item.product_name}</TableCell>
+                          <TableCell>{formatCurrency(item.unit_price)}</TableCell>
+                          <TableCell>{item.quantity}</TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              min="1"
+                              max={item.quantity}
+                              value={state.returnQuantity}
+                              onChange={(e) => updateReturnQuantity(item.id, parseInt(e.target.value) || 1, item.quantity)}
+                              disabled={!state.selected}
+                              className="h-8 w-20"
+                            />
+                          </TableCell>
+                          <TableCell className="text-right font-medium">
+                            {state.selected ? formatCurrency(refundAmount) : "-"}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
               </div>
 
-              <div className="pt-4 border-t">
-                <p className="text-sm text-destructive font-medium">
-                  Warning: This will refund the entire sale and restore stock quantities.
-                </p>
+              <div className="flex justify-end items-center gap-4 p-4 bg-destructive/5 rounded-lg border border-destructive/20">
+                <div className="text-sm text-muted-foreground flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-destructive" />
+                  Stock will be restored for selected items
+                </div>
+                <div className="text-xl font-bold text-destructive">
+                  Refund Total: {formatCurrency(calculateRefundTotal())}
+                </div>
               </div>
             </div>
           )}
@@ -210,13 +319,13 @@ export const ReturnDialog = ({ open, onOpenChange }: ReturnDialogProps) => {
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button 
-            onClick={handleReturn} 
-            disabled={!sale || processing}
+          <Button
+            onClick={handleReturn}
+            disabled={!sale || processing || calculateRefundTotal() === 0}
             variant="destructive"
           >
             {processing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Process Return
+            Process Refund
           </Button>
         </DialogFooter>
       </DialogContent>

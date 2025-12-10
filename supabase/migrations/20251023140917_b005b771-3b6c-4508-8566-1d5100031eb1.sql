@@ -4,7 +4,7 @@ CREATE TABLE public.categories (
   name TEXT NOT NULL,
   description TEXT,
   color TEXT DEFAULT '#3B82F6',
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -20,7 +20,7 @@ CREATE TABLE public.products (
   cost_price DECIMAL(10,2) DEFAULT 0,
   stock_quantity INTEGER DEFAULT 0,
   low_stock_threshold INTEGER DEFAULT 10,
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now(),
   CONSTRAINT positive_prices CHECK (retail_price >= 0 AND cost_price >= 0),

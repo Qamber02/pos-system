@@ -16,16 +16,19 @@ import { toast } from "sonner";
 import { useUserRole } from "@/hooks/useUserRole";
 import { useOfflineSettings } from "@/hooks/useOfflineSettings";
 import { syncService } from "@/lib/syncService";
-import { CachedHeldCart } from "@/lib/db";
+import { CachedHeldCart, db, CachedProduct, CachedProductVariant } from "@/lib/db";
+import { VariantSelector } from "@/components/VariantSelector";
+
+import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
 
 const POS = () => {
   const navigate = useNavigate();
   // We get the user profile from our hook now
-  const { profile } = useUserRole(); 
-  
+  const { profile } = useUserRole();
+
   // We get settings (including taxRate) from our hook
   const { settings } = useOfflineSettings();
-  const taxRate = settings.tax_rate; 
+  const taxRate = settings.tax_rate;
 
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -34,6 +37,26 @@ const POS = () => {
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
   const [holdCartOpen, setHoldCartOpen] = useState(false);
+  const [variantSelectorOpen, setVariantSelectorOpen] = useState(false);
+  const [selectedProductForVariant, setSelectedProductForVariant] = useState<CachedProduct | null>(null);
+
+  // Barcode Scanner Logic
+  useBarcodeScanner({
+    onScan: async (barcode) => {
+      console.log("Scanned barcode:", barcode);
+      try {
+        const product = await db.products.where('barcode').equals(barcode).first();
+        if (product) {
+          handleAddToCart(product);
+          toast.success(`Scanned: ${product.name}`);
+        } else {
+          toast.error(`Product not found for barcode: ${barcode}`);
+        }
+      } catch (error) {
+        console.error("Error scanning barcode:", error);
+      }
+    }
+  });
 
   useEffect(() => {
     checkAuth();
@@ -56,17 +79,39 @@ const POS = () => {
 
   // fetchSettings is removed.
 
-  const handleAddToCart = (product: any) => {
-    const existingItem = cartItems.find((item) => item.id === product.id);
-    
+  const handleAddToCart = async (product: any) => {
+    // Check for variants
+    const variants = await db.productVariants
+      .where('product_id')
+      .equals(product.id)
+      .filter(v => v.is_active && v.stock_quantity > 0)
+      .toArray();
+
+    if (variants.length > 0) {
+      setSelectedProductForVariant(product);
+      setVariantSelectorOpen(true);
+      return;
+    }
+
+    addToCart(product);
+  };
+
+  const addToCart = (product: any, variant?: CachedProductVariant) => {
+    const itemId = variant ? variant.id : product.id;
+    const itemName = variant ? `${product.name} - ${variant.variant_name}` : product.name;
+    const itemPrice = variant ? product.retail_price + variant.price_adjustment : product.retail_price;
+    const itemStock = variant ? variant.stock_quantity : product.stock_quantity;
+
+    const existingItem = cartItems.find((item) => item.id === itemId);
+
     if (existingItem) {
-      if (existingItem.quantity >= product.stock_quantity) {
+      if (existingItem.quantity >= itemStock) {
         toast.error("Cannot add more - insufficient stock");
         return;
       }
       setCartItems(
         cartItems.map((item) =>
-          item.id === product.id
+          item.id === itemId
             ? { ...item, quantity: item.quantity + 1 }
             : item
         )
@@ -75,15 +120,24 @@ const POS = () => {
       setCartItems([
         ...cartItems,
         {
-          id: product.id,
-          name: product.name,
-          price: product.retail_price,
+          id: itemId,
+          name: itemName,
+          price: itemPrice,
           quantity: 1,
-          maxStock: product.stock_quantity,
+          maxStock: itemStock,
+          productId: product.id, // Always store the parent product ID
+          variantId: variant?.id,
+          variantName: variant?.variant_name
         },
       ]);
     }
     toast.success("Added to cart");
+  };
+
+  const handleSelectVariant = (variant: CachedProductVariant) => {
+    if (selectedProductForVariant) {
+      addToCart(selectedProductForVariant, variant);
+    }
   };
 
   const handleUpdateQuantity = (id: string, quantity: number) => {
@@ -125,7 +179,7 @@ const POS = () => {
 
     const cartName = `Cart ${new Date().toLocaleString()}`;
     const now = new Date();
-    
+
     const heldCart: CachedHeldCart = {
       id: crypto.randomUUID(),
       user_id: profile.id,
@@ -142,7 +196,7 @@ const POS = () => {
     try {
       // Use the sync service to save locally and queue for upload
       await syncService.queueOperation('heldCarts', 'insert', heldCart);
-      
+
       toast.success("Cart held successfully (saved locally)");
       setCartItems([]);
       setDiscount(0);
@@ -176,7 +230,7 @@ const POS = () => {
           <div className="flex items-center justify-between py-5 gap-4">
             <div className="flex items-center gap-3 sm:gap-4">
               <Navigation />
-              <CategoryFilter 
+              <CategoryFilter
                 selectedCategory={selectedCategory}
                 onSelectCategory={setSelectedCategory}
               />
@@ -190,8 +244,8 @@ const POS = () => {
             </div>
             <div className="flex items-center gap-3">
               <div className="hidden md:flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-br from-secondary/80 to-secondary/50 border-2 border-border/60 shadow-[var(--shadow-card)]">
-                <Button 
-                  variant="ghost" 
+                <Button
+                  variant="ghost"
                   size="sm"
                   onClick={() => setHoldCartOpen(true)}
                   className="gap-2 h-10 px-4 hover:bg-primary/15 hover:text-primary font-medium transition-[var(--transition-smooth)]"
@@ -200,8 +254,8 @@ const POS = () => {
                   <span className="hidden lg:inline">Held Carts</span>
                 </Button>
                 <div className="w-px h-7 bg-border/70" />
-                <Button 
-                  variant="ghost" 
+                <Button
+                  variant="ghost"
                   size="sm"
                   onClick={() => setReturnOpen(true)}
                   className="gap-2 h-10 px-4 hover:bg-primary/15 hover:text-primary font-medium transition-[var(--transition-smooth)]"
@@ -211,16 +265,16 @@ const POS = () => {
                 </Button>
               </div>
               <div className="md:hidden flex gap-2">
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   size="sm"
                   onClick={() => setHoldCartOpen(true)}
                   className="gap-2"
                 >
                   <FolderOpen className="h-4 w-4" />
                 </Button>
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   size="sm"
                   onClick={() => setReturnOpen(true)}
                   className="gap-2"
@@ -300,6 +354,13 @@ const POS = () => {
         open={holdCartOpen}
         onOpenChange={setHoldCartOpen}
         onLoadCart={handleLoadCart}
+      />
+
+      <VariantSelector
+        open={variantSelectorOpen}
+        onOpenChange={setVariantSelectorOpen}
+        product={selectedProductForVariant}
+        onSelectVariant={handleSelectVariant}
       />
     </div>
   );

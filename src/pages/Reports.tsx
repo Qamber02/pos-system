@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Navigation } from "@/components/Navigation";
@@ -12,8 +13,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CalendarIcon, Download, Eye, FileSpreadsheet } from "lucide-react";
 import * as XLSX from 'xlsx';
-import { format } from "date-fns";
+import { format, startOfMonth, endOfMonth } from "date-fns";
 import { toast } from "sonner";
+import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell, Legend } from "recharts";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 interface Sale {
@@ -28,7 +30,8 @@ interface Sale {
     product_name: string;
     quantity: number;
     unit_price: number;
-    subtotal: number;
+    subtotal?: number; // Optional, might be missing
+    total_price?: number; // Added total_price
   }>;
   products?: {
     cost_price: number;
@@ -39,8 +42,9 @@ const Reports = () => {
   const navigate = useNavigate();
   const [sales, setSales] = useState<Sale[]>([]);
   const [filteredSales, setFilteredSales] = useState<Sale[]>([]);
-  const [startDate, setStartDate] = useState<Date | undefined>(new Date());
-  const [endDate, setEndDate] = useState<Date | undefined>(new Date());
+  const [startDate, setStartDate] = useState<Date | undefined>(startOfMonth(new Date()));
+  const [endDate, setEndDate] = useState<Date | undefined>(endOfMonth(new Date()));
+  const formatPrice = useFormatCurrency();
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -66,19 +70,19 @@ const Reports = () => {
       const { data, error } = await supabase
         .from("sales")
         .select(`
-          *,
-          customers (name),
-          sale_items (
-            product_name,
-            quantity,
-            unit_price,
-            subtotal
-          )
-        `)
+  *,
+  customers(name),
+  sale_items(
+    product_name,
+    quantity,
+    unit_price,
+    total_price
+  )
+    `)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
-      setSales(data || []);
+      setSales((data as any) || []);
     } catch (error: any) {
       toast.error("Error loading sales");
     }
@@ -113,6 +117,8 @@ const Reports = () => {
 
   const exportToExcel = async () => {
     try {
+      toast.loading("Generating professional report...");
+
       // Fetch all products with cost prices for profit calculation
       const { data: products } = await supabase
         .from("products")
@@ -122,150 +128,156 @@ const Reports = () => {
         products?.map(p => [p.id, { cost: Number(p.cost_price || 0), retail: Number(p.retail_price) }]) || []
       );
 
-      // Product-level profit analysis
-      const productProfitData: any[] = [];
-      const productSalesMap = new Map<string, { 
-        name: string; 
-        quantity: number; 
-        revenue: number; 
-        cost: number; 
-      }>();
+      // --- 1. Calculate Metrics ---
+
+      // Daily Data (for graphs)
+      const dailyMap = new Map<string, { revenue: number; profit: number; transactions: number }>();
+
+      // Product Data
+      const productStatsMap = new Map<string, { revenue: number; profit: number; quantity: number }>();
+
+      let totalRev = 0;
+      let totalCst = 0;
+      let todayRev = 0;
+      let todayProfit = 0;
+      const todayStr = format(new Date(), "yyyy-MM-dd");
 
       filteredSales.forEach(sale => {
-        sale.sale_items?.forEach(item => {
-          const existing = productSalesMap.get(item.product_name) || {
-            name: item.product_name,
-            quantity: 0,
-            revenue: 0,
-            cost: 0
-          };
+        const dateStr = format(new Date(sale.created_at), "yyyy-MM-dd");
+        const isToday = dateStr === todayStr;
 
-          const productId = Object.keys(products || {}).find(
-            key => products?.find(p => p.name === item.product_name)?.id
-          );
-          const costInfo = productId ? productCostMap.get(productId) : null;
-          const unitCost = costInfo?.cost || Number(item.unit_price) * 0.6;
-
-          existing.quantity += item.quantity;
-          existing.revenue += Number(item.subtotal);
-          existing.cost += unitCost * item.quantity;
-
-          productSalesMap.set(item.product_name, existing);
-        });
-      });
-
-      productSalesMap.forEach((data, productName) => {
-        const profit = data.revenue - data.cost;
-        const margin = data.revenue > 0 ? (profit / data.revenue) * 100 : 0;
-
-        productProfitData.push({
-          'Product Name': data.name,
-          'Units Sold': data.quantity,
-          'Total Revenue (PKR)': data.revenue.toFixed(2),
-          'Total Cost (PKR)': data.cost.toFixed(2),
-          'Total Profit (PKR)': profit.toFixed(2),
-          'Profit Margin (%)': margin.toFixed(2)
-        });
-      });
-
-      // Sort by profit descending
-      productProfitData.sort((a, b) => 
-        parseFloat(b['Total Profit (PKR)']) - parseFloat(a['Total Profit (PKR)'])
-      );
-
-      // Monthly summary
-      const monthlySummary: any[] = [];
-      const monthlyMap = new Map<string, { revenue: number; cost: number; transactions: number }>();
-
-      filteredSales.forEach(sale => {
-        const monthKey = format(new Date(sale.created_at), "yyyy-MM");
-        const existing = monthlyMap.get(monthKey) || { revenue: 0, cost: 0, transactions: 0 };
-        
         let saleCost = 0;
+
         sale.sale_items?.forEach(item => {
           const productId = products?.find(p => p.name === item.product_name)?.id;
           const costInfo = productId ? productCostMap.get(productId) : null;
-          const unitCost = costInfo?.cost || Number(item.unit_price) * 0.6;
-          saleCost += unitCost * item.quantity;
+          const unitCost = costInfo?.cost || Number(item.unit_price) * 0.6; // Fallback to 60% cost
+          const itemCost = unitCost * item.quantity;
+          // FIX: Use total_price, fallback to subtotal if missing
+          const itemRevenue = Number(item.total_price || item.subtotal || 0);
+          const itemProfit = itemRevenue - itemCost;
+
+          saleCost += itemCost;
+
+          // Update Product Stats
+          const pStats = productStatsMap.get(item.product_name) || { revenue: 0, profit: 0, quantity: 0 };
+          pStats.revenue += itemRevenue;
+          pStats.profit += itemProfit;
+          pStats.quantity += item.quantity;
+          productStatsMap.set(item.product_name, pStats);
         });
 
-        existing.revenue += Number(sale.total_amount);
-        existing.cost += saleCost;
-        existing.transactions += 1;
+        const saleRevenue = Number(sale.total_amount);
+        const saleProfit = saleRevenue - saleCost;
 
-        monthlyMap.set(monthKey, existing);
+        totalRev += saleRevenue;
+        totalCst += saleCost;
+
+        if (isToday) {
+          todayRev += saleRevenue;
+          todayProfit += saleProfit;
+        }
+
+        // Update Daily Stats
+        const dStats = dailyMap.get(dateStr) || { revenue: 0, profit: 0, transactions: 0 };
+        dStats.revenue += saleRevenue;
+        dStats.profit += saleProfit;
+        dStats.transactions += 1;
+        dailyMap.set(dateStr, dStats);
       });
 
-      monthlyMap.forEach((data, month) => {
-        const profit = data.revenue - data.cost;
-        const margin = data.revenue > 0 ? (profit / data.revenue) * 100 : 0;
+      const totalProf = totalRev - totalCst;
+      const profMargin = totalRev > 0 ? (totalProf / totalRev) * 100 : 0;
+      const todayMargin = todayRev > 0 ? (todayProfit / todayRev) * 100 : 0;
 
-        monthlySummary.push({
-          'Month': month,
-          'Total Revenue (PKR)': data.revenue.toFixed(2),
-          'Total Cost (PKR)': data.cost.toFixed(2),
-          'Total Profit (PKR)': profit.toFixed(2),
-          'Profit Margin (%)': margin.toFixed(2),
-          'Transactions': data.transactions
-        });
-      });
+      // --- 2. Prepare Sheet Data ---
 
-      // Sales transactions
-      const salesData = filteredSales.map((sale) => ({
-        'Receipt Number': sale.receipt_number,
-        'Date': format(new Date(sale.created_at), "yyyy-MM-dd HH:mm"),
-        'Customer': sale.customers?.name || "Walk-in",
-        'Total (PKR)': Number(sale.total_amount).toFixed(2),
-        'Payment Method': sale.payment_method.toUpperCase(),
-      }));
+      // --- 2. Prepare Sheet Data ---
 
-      // Overall summary
-      const overallProfit = totalRevenue - totalCost;
-      const summaryData = [
-        { Metric: 'Total Revenue (PKR)', Value: totalRevenue.toFixed(2) },
-        { Metric: 'Total Cost (PKR)', Value: totalCost.toFixed(2) },
-        { Metric: 'Total Profit (PKR)', Value: overallProfit.toFixed(2) },
-        { Metric: 'Profit Margin (%)', Value: profitMargin.toFixed(2) },
-        { Metric: 'Total Transactions', Value: totalTransactions.toString() },
-        { Metric: 'Average Transaction (PKR)', Value: averageTransaction.toFixed(2) },
+      // Sheet 1: Executive Dashboard (Summary)
+      const dashboardData = [
+        { Label: "EXECUTIVE SUMMARY", Value: "" },
+        { Label: `Report Generated: ${format(new Date(), "PPP HH:mm")}`, Value: "" },
+        { Label: "", Value: "" },
+        { Label: "OVERALL PERFORMANCE", Value: "" },
+        { Label: "Total Revenue", Value: totalRev },
+        { Label: "Total Profit", Value: totalProf },
+        { Label: "Profit Margin", Value: `${profMargin.toFixed(2)}%` },
+        { Label: "Total Transactions", Value: filteredSales.length },
+        { Label: "Avg Transaction Value", Value: filteredSales.length > 0 ? totalRev / filteredSales.length : 0 },
+        { Label: "", Value: "" },
+        { Label: "TODAY'S PERFORMANCE", Value: "" },
+        { Label: "Sales Today", Value: todayRev },
+        { Label: "Profit Today", Value: todayProfit },
+        { Label: "Today's Margin", Value: `${todayMargin.toFixed(2)}%` },
+        { Label: "", Value: "" },
+        { Label: "TOP 5 PRODUCTS (REVENUE)", Value: "" },
       ];
 
-      // Create workbook with formatted sheets
-      const wb = XLSX.utils.book_new();
-      
-      // Summary sheet
-      const wsSummary = XLSX.utils.json_to_sheet(summaryData);
-      wsSummary['!cols'] = [{ wch: 30 }, { wch: 20 }];
-      XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
-      
-      // Monthly performance sheet
-      const wsMonthly = XLSX.utils.json_to_sheet(monthlySummary);
-      wsMonthly['!cols'] = [{ wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 14 }];
-      XLSX.utils.book_append_sheet(wb, wsMonthly, "Monthly Performance");
+      // Add Top 5 Products to Dashboard
+      const sortedProducts = Array.from(productStatsMap.entries())
+        .sort((a, b) => b[1].revenue - a[1].revenue)
+        .slice(0, 5);
 
-      // Product profit analysis sheet
-      const wsProducts = XLSX.utils.json_to_sheet(productProfitData);
-      wsProducts['!cols'] = [{ wch: 30 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }];
-      XLSX.utils.book_append_sheet(wb, wsProducts, "Product Profit Analysis");
-      
-      // Sales transactions sheet
-      const wsSales = XLSX.utils.json_to_sheet(salesData);
-      wsSales['!cols'] = [{ wch: 25 }, { wch: 20 }, { wch: 20 }, { wch: 15 }, { wch: 15 }];
-      XLSX.utils.book_append_sheet(wb, wsSales, "Transactions");
-      
-      // Export with metadata
-      const fileName = `sales-report-${format(new Date(), "yyyy-MM-dd")}.xlsx`;
-      XLSX.writeFile(wb, fileName, { 
-        bookType: 'xlsx',
-        Props: {
-          Title: "Sales & Profit Report",
-          Subject: "Comprehensive Sales Analysis",
-          Author: "POS SHOPPING",
-          CreatedDate: new Date()
-        }
+      sortedProducts.forEach(([name, stats]) => {
+        dashboardData.push({ Label: name, Value: stats.revenue });
       });
-      
-      toast.success("Comprehensive Excel report exported with profit analysis");
+
+      // Sheet 2: Daily Sales (For Graphs)
+      const dailyData = Array.from(dailyMap.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([date, stats]) => ({
+          DATE: date,
+          REVENUE: stats.revenue,
+          PROFIT: stats.profit,
+          TRANSACTIONS: stats.transactions,
+          AVG_ORDER_VALUE: stats.revenue / stats.transactions
+        }));
+
+      // Sheet 3: Product Performance
+      const productData = Array.from(productStatsMap.entries())
+        .sort((a, b) => b[1].profit - a[1].profit)
+        .map(([name, stats]) => ({
+          PRODUCT: name,
+          UNITS_SOLD: stats.quantity,
+          REVENUE: stats.revenue,
+          PROFIT: stats.profit,
+          MARGIN_PERCENT: stats.revenue > 0 ? (stats.profit / stats.revenue) * 100 : 0
+        }));
+
+      // Sheet 4: Raw Transactions
+      const transactionData = filteredSales.map(sale => ({
+        RECEIPT: sale.receipt_number,
+        DATE: format(new Date(sale.created_at), "yyyy-MM-dd HH:mm"),
+        CUSTOMER: sale.customers?.name || "Walk-in",
+        PAYMENT: sale.payment_method.toUpperCase(),
+        TOTAL: Number(sale.total_amount),
+        ITEMS: sale.sale_items?.map(i => `${i.quantity}x ${i.product_name}`).join(", ")
+      }));
+
+      // --- 3. Create Workbook ---
+      const wb = XLSX.utils.book_new();
+
+      // Helper to append sheet with auto-width
+      const appendSheet = (data: any[], name: string, colWidths: number[] = []) => {
+        const ws = XLSX.utils.json_to_sheet(data);
+        if (colWidths.length) {
+          ws['!cols'] = colWidths.map(w => ({ wch: w }));
+        }
+        XLSX.utils.book_append_sheet(wb, ws, name);
+      };
+
+      appendSheet(dashboardData, "Executive Dashboard", [40, 25]);
+      appendSheet(dailyData, "Daily Trends", [15, 15, 15, 15, 20]);
+      appendSheet(productData, "Product Performance", [40, 15, 15, 15, 15]);
+      appendSheet(transactionData, "Raw Transactions", [25, 25, 25, 15, 15, 60]);
+
+      // --- 4. Export ---
+      const fileName = `POS_Report_${format(new Date(), "yyyy-MM-dd_HHmm")}.xlsx`;
+      XLSX.writeFile(wb, fileName);
+
+      toast.dismiss();
+      toast.success("Professional Report Downloaded!");
     } catch (error) {
       console.error("Export error:", error);
       toast.error("Failed to export report");
@@ -273,7 +285,7 @@ const Reports = () => {
   };
 
   const formatCurrency = (amount: number) => {
-    return `PKR ${amount.toFixed(2)}`;
+    return formatPrice(amount);
   };
 
   const totalRevenue = filteredSales.reduce((sum, sale) => sum + Number(sale.total_amount), 0);
@@ -295,6 +307,37 @@ const Reports = () => {
   const totalProfit = totalRevenue - totalCost;
   const profitMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
 
+  // Prepare data for Sales Trend Chart (Last 7 days)
+  const salesTrendData = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - i));
+    const dateStr = format(d, 'MMM dd');
+
+    const dayRevenue = filteredSales
+      .filter(sale => format(new Date(sale.created_at), 'MMM dd') === dateStr)
+      .reduce((sum, sale) => sum + Number(sale.total_amount), 0);
+
+    return { name: dateStr, total: dayRevenue };
+  });
+
+  // Prepare data for Top Products Chart
+  const productSalesMap = new Map<string, number>();
+  filteredSales.forEach(sale => {
+    sale.sale_items?.forEach(item => {
+      const current = productSalesMap.get(item.product_name) || 0;
+      // FIX: Use total_price, fallback to subtotal if missing
+      const itemRevenue = Number(item.total_price || item.subtotal || 0);
+      productSalesMap.set(item.product_name, current + itemRevenue);
+    });
+  });
+
+  const topProductsData = Array.from(productSalesMap.entries())
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 5);
+
+  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <header className="border-b bg-card shadow-sm sticky top-0 z-50">
@@ -308,7 +351,7 @@ const Reports = () => {
         <Navigation />
         <main className="flex-1 container mx-auto px-4 py-6 space-y-6">
           <Dashboard />
-          
+
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Card>
               <CardHeader className="pb-2">
@@ -334,6 +377,89 @@ const Reports = () => {
                 <CardDescription>Avg. Transaction</CardDescription>
                 <CardTitle className="text-3xl">{formatCurrency(averageTransaction)}</CardTitle>
               </CardHeader>
+            </Card>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+            <Card className="col-span-4">
+              <CardHeader>
+                <CardTitle>Sales Overview</CardTitle>
+              </CardHeader>
+              <CardContent className="pl-2">
+                <div className="h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={salesTrendData}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis
+                        dataKey="name"
+                        stroke="#888888"
+                        fontSize={12}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <YAxis
+                        stroke="#888888"
+                        fontSize={12}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={(value) => formatPrice(value)}
+                      />
+                      <Tooltip
+                        cursor={{ fill: 'transparent' }}
+                        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                      />
+                      <Bar dataKey="total" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="col-span-3">
+              <CardHeader>
+                <CardTitle>Top Products</CardTitle>
+                <CardDescription>
+                  Best selling items by revenue
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="h-[300px] flex items-center justify-center">
+                  {topProductsData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={topProductsData}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={80}
+                          paddingAngle={5}
+                          dataKey="value"
+                          label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                        >
+                          {topProductsData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip formatter={(value: number) => formatPrice(value)} />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="text-muted-foreground text-sm">No sales data available</div>
+                  )}
+                </div>
+                <div className="mt-4 space-y-2">
+                  {topProductsData.slice(0, 5).map((item, index) => (
+                    <div key={index} className="flex items-center justify-between text-sm">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
+                        <span>{item.name}</span>
+                      </div>
+                      <span className="font-medium">{formatCurrency(item.value)}</span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
             </Card>
           </div>
 
@@ -466,7 +592,7 @@ const Reports = () => {
                         <TableCell>{item.product_name}</TableCell>
                         <TableCell>{item.quantity}</TableCell>
                         <TableCell>{formatCurrency(Number(item.unit_price))}</TableCell>
-                        <TableCell className="text-right">{formatCurrency(Number(item.subtotal))}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(Number(item.total_price || item.subtotal || 0))}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

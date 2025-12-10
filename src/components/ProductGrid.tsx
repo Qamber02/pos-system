@@ -1,15 +1,18 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Search, AlertTriangle, Wifi, WifiOff } from "lucide-react";
-// We no longer need supabase or toast here
-import { useOfflineProducts } from "@/hooks/useOfflineProducts";
-import { useOfflineCategories } from "@/hooks/useOfflineCategories"; // Import categories hook
-import { useOnlineStatus } from "@/hooks/useOnlineStatus"; // Import online status hook
+import { useOfflineCategories } from "@/hooks/useOfflineCategories";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { useDebounce } from "@/hooks/useDebounce";
-import { CachedProduct, CachedCategory } from "@/lib/db"; // Import types
+import { CachedProduct, CachedCategory } from "@/lib/db";
+import { ProductCard } from "@/components/pos/ProductCard";
+
+// IMPORT THE NEWLY OPTIMIZED HOOK
+import { useOfflineProducts } from "@/hooks/useOfflineProducts";
+import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 
 // Define a new product type that includes the joined category
 interface ProductWithCategory extends CachedProduct {
@@ -22,75 +25,60 @@ interface ProductGridProps {
   selectedCategory: string | null;
 }
 
+const PRODUCTS_PER_PAGE = 90; // Load 90 products at a time
+
 export const ProductGrid = ({ onAddToCart, selectedCategory }: ProductGridProps) => {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const debouncedSearch = useDebounce(searchQuery, 300);
-  
-  // 1. Get products from the local db
-  // Note: We removed 'isOnline' from here
-  const { products: cachedProducts, loading: productsLoading } = useOfflineProducts();
-  
-  // 2. Get categories from the local db
-  const { categories, loading: categoriesLoading } = useOfflineCategories();
 
-  // 3. Get the *reliable* online status
+  const [limit, setLimit] = useState(PRODUCTS_PER_PAGE);
+
+  const { products: cachedProducts, loading: productsLoading } = useOfflineProducts(
+    debouncedSearch,
+    selectedCategory,
+    limit // Pass the current limit
+  );
+
+  const { categories, loading: categoriesLoading } = useOfflineCategories();
   const isOnline = useOnlineStatus();
 
-  // 4. We no longer need the 'fetchFullProducts' useEffect or 'fullProducts' state
-  //    Instead, we "join" the data from our two hooks using useMemo
+  // 3. Decide which product list to display
+  const productsToDisplay = cachedProducts;
 
-  // Memoized filtered products
+  // 4. Update useMemo to use our new `productsToDisplay` variable
   const filteredProducts = useMemo(() => {
-    // Create a quick lookup map for categories (id -> category)
     const categoryMap = new Map(categories.map(c => [c.id, c]));
 
-    // "Join" products and categories
-    let productsWithCategories: ProductWithCategory[] = cachedProducts.map(product => ({
+    return productsToDisplay.map(product => ({
       ...product,
       categoryName: product.category_id ? categoryMap.get(product.category_id)?.name : undefined,
       categoryColor: product.category_id ? categoryMap.get(product.category_id)?.color : undefined,
     }));
+  }, [productsToDisplay, categories]); // Only re-run when products or categories change
 
-    // Apply category filter
-    if (selectedCategory) {
-      productsWithCategories = productsWithCategories.filter(p => p.category_id === selectedCategory);
-    }
-
-    // Apply search filter
-    if (debouncedSearch) {
-      productsWithCategories = productsWithCategories.filter(p =>
-        p.name.toLowerCase().includes(debouncedSearch.toLowerCase())
-      );
-    }
-
-    return productsWithCategories;
-  }, [cachedProducts, categories, selectedCategory, debouncedSearch]);
-
-  const formatCurrency = (amount: number) => {
-    return `PKR ${amount.toFixed(2)}`;
-  };
+  const formatCurrency = useFormatCurrency();
 
   const isLoading = productsLoading || categoriesLoading;
 
-  if (isLoading) {
+  if (isLoading && limit === PRODUCTS_PER_PAGE) { // Only show full skeleton on first load
     return (
       <div className="space-y-4">
         {/* ... (skeleton/loading state code is fine, no changes needed) ... */}
         <div className="relative">
-          <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Search products..." className="pl-10" disabled />
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-          {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-            <Card key={i} className="animate-pulse">
-              <CardContent className="p-4">
-                <div className="h-4 bg-muted rounded w-3/4 mb-2" />
-                <div className="h-6 bg-muted rounded w-1/2 mb-2" />
-                <div className="h-3 bg-muted rounded w-1/3" />
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+          <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+          <Input placeholder="Search products..." className="pl-10" disabled />
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+            <Card key={i} className="animate-pulse">
+              <CardContent className="p-4">
+                <div className="h-4 bg-muted rounded w-3/4 mb-2" />
+                <div className="h-6 bg-muted rounded w-1/2 mb-2" />
+                <div className="h-3 bg-muted rounded w-1/3" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </div>
     );
   }
@@ -107,8 +95,7 @@ export const ProductGrid = ({ onAddToCart, selectedCategory }: ProductGridProps)
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
-        
-        {/* 5. This badge now uses our reliable 'isOnline' hook */}
+
         {!isOnline && (
           <Badge variant={"secondary"} className="h-10 px-3 flex items-center gap-2">
             <WifiOff className="h-4 w-4" />
@@ -117,78 +104,43 @@ export const ProductGrid = ({ onAddToCart, selectedCategory }: ProductGridProps)
         )}
       </div>
 
-      {filteredProducts.length === 0 ? (
-        <div className="text-center py-12">
-          <p className="text-muted-foreground">No products found</p>
+      {/* 5. Update this check to use 'productsToDisplay' */}
+      {productsToDisplay.length === 0 && !isLoading ? (
+        <div className="flex flex-col items-center justify-center py-20 text-center">
+          <div className="w-16 h-16 bg-zinc-100 dark:bg-zinc-800 rounded-full flex items-center justify-center mb-4">
+            <Search className="h-8 w-8 text-zinc-400" />
+          </div>
+          <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">No products found</h3>
+          <p className="text-muted-foreground max-w-xs mx-auto mt-2">
+            {searchQuery ? `We couldn't find anything matching "${searchQuery}"` : "Try adjusting your filters or add new products."}
+          </p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredProducts.map((product) => {
-            const isLowStock = product.stock_quantity <= product.low_stock_threshold;
-            const isOutOfStock = product.stock_quantity === 0;
-
-            return (
-              <Card
-                key={product.id}
-                className={`overflow-hidden hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer group ${
-                  isOutOfStock ? "opacity-60" : ""
-                }`}
-                onClick={() => !isOutOfStock && onAddToCart(product)}
-              >
-                <CardContent className="p-4">
-                  <div className="space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <h3 className="font-bold text-base line-clamp-2 flex-1 group-hover:text-primary transition-colors min-h-[2.5rem]">
-                        {product.name}
-                      </h3>
-                      {isLowStock && !isOutOfStock && (
-                        <AlertTriangle className="h-5 w-5 text-warning flex-shrink-0" />
-                      )}
-                    </div>
-
-                    {/* 6. This badge now gets data from our local "join" */}
-                    {product.categoryName && product.categoryColor && (
-                      <Badge
-                        className="text-xs"
-                        style={{ backgroundColor: product.categoryColor }}
-                      >
-                        {product.categoryName}
-                      </Badge>
-                    )}
-                    
-                    <div className="space-y-2">
-                      <div className="flex items-baseline justify-between">
-                        <p className="text-2xl font-bold text-primary">
-                          {formatCurrency(product.retail_price)}
-                        </p>
-                      </div>
-                      
-                      <p className={`text-xs font-medium ${isOutOfStock ? "text-destructive" : isLowStock ? "text-warning" : "text-muted-foreground"}`}>
-                        {isOutOfStock ? "Out of Stock" : `${product.stock_quantity} in stock`}
-                      </p>
-                    </div>
-
-                    <Button
-                      className="w-full h-10 text-sm font-semibold"
-                      disabled={isOutOfStock}
-                      variant={isOutOfStock ? "secondary" : "default"}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (!isOutOfStock) {
-                          onAddToCart(product);
-                        }
-                      }}
-                    >
-                      <Plus className="h-4 w-4 mr-1" />
-                      {isOutOfStock ? "Out of Stock" : "Add to Cart"}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
+          {filteredProducts.map((product) => (
+            <ProductCard
+              key={product.id}
+              product={product}
+              onAddToCart={onAddToCart}
+            />
+          ))}
         </div>
       )}
+
+      {/* 6. ADD THE "LOAD MORE" BUTTON */}
+      <div className="text-center mt-6">
+        {/* This logic is now correct. It shows if the number of products we *received*
+            is equal to the limit we *requested*. */}
+        {cachedProducts.length === limit && (
+          <Button
+            variant="outline"
+            onClick={() => setLimit(prevLimit => prevLimit + PRODUCTS_PER_PAGE)}
+            disabled={isLoading}
+          >
+            {isLoading ? "Loading..." : "Load More Products"}
+          </Button>
+        )}
+      </div>
     </div>
   );
 };

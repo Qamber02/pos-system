@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { Loader2, Trash2, ShoppingBag } from "lucide-react";
 import { CartItem } from "./Cart";
 import { Card, CardContent } from "@/components/ui/card";
+import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 
 interface HoldCartDialogProps {
   open: boolean;
@@ -75,9 +76,7 @@ export const HoldCartDialog = ({ open, onOpenChange, onLoadCart }: HoldCartDialo
     }
   };
 
-  const formatCurrency = (amount: number) => {
-    return `PKR ${amount.toFixed(2)}`;
-  };
+  const formatCurrency = useFormatCurrency();
 
   const calculateTotal = (items: CartItem[], discount: number) => {
     const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);

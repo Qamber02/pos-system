@@ -17,8 +17,7 @@ dist-electron/
 *.local
 
 # Environment files
-.env
-.env.*
+
 
 # Editor and system files
 .vscode/*

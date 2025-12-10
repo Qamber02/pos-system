@@ -8,18 +8,19 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
-import { Loader2, Save, Upload, Image as ImageIcon, Key, Mail, Shield } from "lucide-react";
+import { Loader2, Save, Upload, Image as ImageIcon, Key, Mail, Shield, AlertTriangle } from "lucide-react";
 import { useUserRole } from "@/hooks/useUserRole";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import defaultLogo from "@/assets/default-logo.png";
+import { db } from "@/lib/db";
 
 const Settings = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const { role, isAdmin } = useUserRole();
-  
+
   const [form, setForm] = useState({
     business_name: "My Store",
     tax_rate: "0",
@@ -124,6 +125,14 @@ const Settings = () => {
           .update(settingsData)
           .eq("id", settingsId);
         if (error) throw error;
+
+        // Update local IndexedDB
+        await db.settings.put({
+          id: settingsId,
+          ...settingsData,
+          synced: true,
+          lastModified: Date.now(),
+        });
       } else {
         const { data, error } = await supabase
           .from("settings")
@@ -131,7 +140,17 @@ const Settings = () => {
           .select()
           .single();
         if (error) throw error;
-        if (data) setSettingsId(data.id);
+        if (data) {
+          setSettingsId(data.id);
+
+          // Add to local IndexedDB
+          await db.settings.put({
+            id: data.id,
+            ...settingsData,
+            synced: true,
+            lastModified: Date.now(),
+          });
+        }
       }
 
       toast.success("Settings saved successfully");
@@ -280,7 +299,7 @@ const Settings = () => {
                         onChange={(e) => setNewEmail(e.target.value)}
                         placeholder="Enter new email"
                       />
-                      <Button 
+                      <Button
                         onClick={handleChangeEmail}
                         disabled={updatingAccount || !newEmail}
                       >
@@ -304,7 +323,7 @@ const Settings = () => {
                         placeholder="Enter 6-digit code"
                         maxLength={6}
                       />
-                      <Button 
+                      <Button
                         onClick={handleVerifyEmailOtp}
                         disabled={updatingAccount || emailOtp.length < 6}
                       >
@@ -349,7 +368,7 @@ const Settings = () => {
                     placeholder="Confirm new password"
                   />
                 </div>
-                <Button 
+                <Button
                   onClick={handleChangePassword}
                   disabled={updatingAccount || !newPassword || !confirmPassword}
                 >
@@ -480,6 +499,39 @@ const Settings = () => {
                       Save Settings
                     </>
                   )}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-destructive/20">
+            <CardHeader>
+              <CardTitle className="text-destructive flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5" />
+                Data Management
+              </CardTitle>
+              <CardDescription>
+                Manage your local data and synchronization
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between p-4 border rounded-lg bg-destructive/5 border-destructive/10">
+                <div className="space-y-1">
+                  <h4 className="font-medium text-destructive">Reset Local Data</h4>
+                  <p className="text-sm text-muted-foreground">
+                    Clear all local data and re-sync from the server. Use this if you see duplicate items or sync errors.
+                  </p>
+                </div>
+                <Button
+                  variant="destructive"
+                  onClick={async () => {
+                    if (confirm("Are you sure? This will clear all local data and reload the page.")) {
+                      await db.delete();
+                      window.location.reload();
+                    }
+                  }}
+                >
+                  Reset Data
                 </Button>
               </div>
             </CardContent>
