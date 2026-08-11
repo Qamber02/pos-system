@@ -7,8 +7,8 @@ let publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
 // Fallback to local Supabase defaults if invalid or placeholder
 if (!url || typeof url !== 'string' || (!url.startsWith('http://') && !url.startsWith('https://'))) {
-  console.warn('Invalid or missing VITE_SUPABASE_URL. Falling back to local Supabase URL (http://127.0.0.1:54321).');
-  url = 'http://127.0.0.1:54321';
+  console.warn('Invalid or missing VITE_SUPABASE_URL. Falling back to local Supabase URL (http://127.0.0.1:54331).');
+  url = 'http://127.0.0.1:54331';
 }
 
 if (!publishableKey || publishableKey === 'YOUR_ID' || publishableKey === 'YOUR ID') {
