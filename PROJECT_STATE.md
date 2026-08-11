@@ -26,7 +26,7 @@ The **POS Shopping System** is an offline-first, high-performance Point of Sale 
 
 ### Server Endpoints & Ports
 
-To prevent port collisions with other local Supabase instances, custom ports are configured in `supabase/config.toml`:
+Local Supabase is fully running and healthy on custom ports:
 
 | Service | Protocol / URL | Port |
 |---|---|---|
