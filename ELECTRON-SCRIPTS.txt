@@ -1,0 +1,63 @@
+===============================================
+ELECTRON SETUP - MANUAL PACKAGE.JSON UPDATES
+===============================================
+
+You need to manually add these scripts to package.json:
+
+1. Open package.json in a text editor
+
+2. Add these entries to the "scripts" section:
+
+    "electron:dev": "NODE_ENV=development electron electron/main.js",
+    "electron:build": "electron-builder",
+    "electron:build:win": "electron-builder --win --x64",
+    "electron:build:mac": "electron-builder --mac",
+    "electron:build:linux": "electron-builder --linux"
+
+3. Add this at the root level (not inside any section):
+
+    "main": "electron/main.js"
+
+4. Your scripts section should look like this:
+
+{
+  "name": "pos-shopping",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "electron:dev": "NODE_ENV=development electron electron/main.js",
+    "electron:build": "electron-builder",
+    "electron:build:win": "electron-builder --win --x64",
+    "electron:build:mac": "electron-builder --mac",
+    "electron:build:linux": "electron-builder --linux"
+  },
+  ...rest of your package.json
+}
+
+===============================================
+IMPORTANT NOTES:
+===============================================
+
+1. Electron, electron-builder, and better-sqlite3 are already installed
+2. The electron/ folder is already created with main.js and preload.js
+3. electron-builder.json is already configured
+4. Your logo is set up for the app icon
+
+===============================================
+BUILDING YOUR .EXE FILE:
+===============================================
+
+After adding the scripts:
+
+1. Build the web app:
+   npm run build
+
+2. Build Windows .exe:
+   npm run electron:build:win
+
+3. Find your installer:
+   dist-electron/POS SHOPPING Setup.exe
+
+===============================================

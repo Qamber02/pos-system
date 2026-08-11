@@ -1,0 +1,35 @@
+{
+  "appId": "com.posshopping.app",
+  "productName": "POS SHOPPING",
+  "directories": {
+    "output": "dist-electron"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*"
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "src/assets/default-logo.png"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true
+  },
+  "mac": {
+    "target": "dmg",
+    "icon": "src/assets/default-logo.png"
+  },
+  "linux": {
+    "target": ["AppImage"],
+    "icon": "src/assets/default-logo.png",
+    "category": "Office"
+  }
+}

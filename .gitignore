@@ -1,0 +1,51 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependency directories
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+dist-electron/
+*.local
+
+# Environment files
+.env
+.env.*
+!.env.example
+# Editor and system files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS junk files
+Thumbs.db
+Desktop.ini
+
+# Electron specific
+out/
+release/
+build/
+*.asar
+
+# Lock files (optional — if you use multiple package managers)
+bun.lockb
+pnpm-lock.yaml
+yarn.lock
+
+# Misc
+coverage/
+supabase/.temp/

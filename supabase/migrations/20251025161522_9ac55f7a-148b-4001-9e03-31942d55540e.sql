@@ -1,0 +1,2 @@
+-- Skipped seed migration to avoid user_id constraint issues.
+-- Seed data will be handled in 20251121000002_fix_schema_and_seed.sql
