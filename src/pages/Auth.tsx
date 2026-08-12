@@ -290,144 +290,148 @@ const Auth = () => {
               </TabsList>
 
               <AnimatePresence mode="wait">
-                <TabsContent value="signin" asChild>
-                  <motion.div
-                    key="signin"
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 20 }}
-                    transition={{ duration: 0.3 }}
-                  >
-                    <form onSubmit={signInForm.handleSubmit(onSignIn)} className="space-y-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="signin-email">Email</Label>
-                        <Input
-                          id="signin-email"
-                          type="email"
-                          placeholder="name@example.com"
-                          {...signInForm.register("email")}
-                          disabled={loading}
-                        />
-                        {signInForm.formState.errors.email && (
-                          <p className="text-sm text-destructive">{signInForm.formState.errors.email.message}</p>
-                        )}
-                      </div>
-
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <Label htmlFor="signin-password">Password</Label>
-                          <Button variant="link" className="p-0 h-auto text-xs" type="button" onClick={() => setActiveTab("reset")}>
-                            Forgot password?
-                          </Button>
-                        </div>
-                        <div className="relative">
+                {activeTab === "signin" && (
+                  <TabsContent key="signin" value="signin" forceMount asChild>
+                    <motion.div
+                      key="signin-motion"
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 20 }}
+                      transition={{ duration: 0.3 }}
+                    >
+                      <form onSubmit={signInForm.handleSubmit(onSignIn)} className="space-y-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="signin-email">Email</Label>
                           <Input
-                            id="signin-password"
-                            type={showPassword ? "text" : "password"}
-                            {...signInForm.register("password")}
+                            id="signin-email"
+                            type="email"
+                            placeholder="name@example.com"
+                            {...signInForm.register("email")}
                             disabled={loading}
                           />
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
-                            onClick={() => setShowPassword(!showPassword)}
-                          >
-                            {showPassword ? <EyeOff className="h-4 w-4 text-muted-foreground" /> : <Eye className="h-4 w-4 text-muted-foreground" />}
-                          </Button>
+                          {signInForm.formState.errors.email && (
+                            <p className="text-sm text-destructive">{signInForm.formState.errors.email.message}</p>
+                          )}
                         </div>
-                        {signInForm.formState.errors.password && (
-                          <p className="text-sm text-destructive">{signInForm.formState.errors.password.message}</p>
-                        )}
-                      </div>
 
-                      <div className="flex items-center space-x-2">
-                        <Checkbox
-                          id="remember"
-                          checked={signInForm.watch("rememberMe")}
-                          onCheckedChange={(c) => signInForm.setValue("rememberMe", c as boolean)}
-                        />
-                        <Label htmlFor="remember" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                          Remember me for 30 days
-                        </Label>
-                      </div>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <Label htmlFor="signin-password">Password</Label>
+                            <Button variant="link" className="p-0 h-auto text-xs" type="button" onClick={() => setActiveTab("reset")}>
+                              Forgot password?
+                            </Button>
+                          </div>
+                          <div className="relative">
+                            <Input
+                              id="signin-password"
+                              type={showPassword ? "text" : "password"}
+                              {...signInForm.register("password")}
+                              disabled={loading}
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                              onClick={() => setShowPassword(!showPassword)}
+                            >
+                              {showPassword ? <EyeOff className="h-4 w-4 text-muted-foreground" /> : <Eye className="h-4 w-4 text-muted-foreground" />}
+                            </Button>
+                          </div>
+                          {signInForm.formState.errors.password && (
+                            <p className="text-sm text-destructive">{signInForm.formState.errors.password.message}</p>
+                          )}
+                        </div>
 
-                      <Button type="submit" className="w-full bg-red-600 hover:bg-red-700 text-white" disabled={loading}>
-                        {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        Sign In
-                      </Button>
-                    </form>
-                  </motion.div>
-                </TabsContent>
+                        <div className="flex items-center space-x-2">
+                          <Checkbox
+                            id="remember"
+                            checked={signInForm.watch("rememberMe")}
+                            onCheckedChange={(c) => signInForm.setValue("rememberMe", c as boolean)}
+                          />
+                          <Label htmlFor="remember" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                            Remember me for 30 days
+                          </Label>
+                        </div>
 
-                <TabsContent value="signup" asChild>
-                  <motion.div
-                    key="signup"
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    transition={{ duration: 0.3 }}
-                  >
-                    <form onSubmit={signUpForm.handleSubmit(onSignUp)} className="space-y-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="signup-email">Email</Label>
-                        <Input
-                          id="signup-email"
-                          type="email"
-                          placeholder="name@example.com"
-                          {...signUpForm.register("email")}
-                          disabled={loading}
-                        />
-                        {signUpForm.formState.errors.email && (
-                          <p className="text-sm text-destructive">{signUpForm.formState.errors.email.message}</p>
-                        )}
-                      </div>
+                        <Button type="submit" className="w-full bg-red-600 hover:bg-red-700 text-white" disabled={loading}>
+                          {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                          Sign In
+                        </Button>
+                      </form>
+                    </motion.div>
+                  </TabsContent>
+                )}
 
-                      <div className="space-y-2">
-                        <Label htmlFor="signup-password">Password</Label>
-                        <div className="relative">
+                {activeTab === "signup" && (
+                  <TabsContent key="signup" value="signup" forceMount asChild>
+                    <motion.div
+                      key="signup-motion"
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -20 }}
+                      transition={{ duration: 0.3 }}
+                    >
+                      <form onSubmit={signUpForm.handleSubmit(onSignUp)} className="space-y-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="signup-email">Email</Label>
                           <Input
-                            id="signup-password"
-                            type={showPassword ? "text" : "password"}
-                            {...signUpForm.register("password")}
+                            id="signup-email"
+                            type="email"
+                            placeholder="name@example.com"
+                            {...signUpForm.register("email")}
                             disabled={loading}
                           />
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
-                            onClick={() => setShowPassword(!showPassword)}
-                          >
-                            {showPassword ? <EyeOff className="h-4 w-4 text-muted-foreground" /> : <Eye className="h-4 w-4 text-muted-foreground" />}
-                          </Button>
+                          {signUpForm.formState.errors.email && (
+                            <p className="text-sm text-destructive">{signUpForm.formState.errors.email.message}</p>
+                          )}
                         </div>
-                        {signUpForm.formState.errors.password && (
-                          <p className="text-sm text-destructive">{signUpForm.formState.errors.password.message}</p>
-                        )}
-                      </div>
 
-                      <div className="space-y-2">
-                        <Label htmlFor="confirm-password">Confirm Password</Label>
-                        <Input
-                          id="confirm-password"
-                          type="password"
-                          {...signUpForm.register("confirmPassword")}
-                          disabled={loading}
-                        />
-                        {signUpForm.formState.errors.confirmPassword && (
-                          <p className="text-sm text-destructive">{signUpForm.formState.errors.confirmPassword.message}</p>
-                        )}
-                      </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="signup-password">Password</Label>
+                          <div className="relative">
+                            <Input
+                              id="signup-password"
+                              type={showPassword ? "text" : "password"}
+                              {...signUpForm.register("password")}
+                              disabled={loading}
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                              onClick={() => setShowPassword(!showPassword)}
+                            >
+                              {showPassword ? <EyeOff className="h-4 w-4 text-muted-foreground" /> : <Eye className="h-4 w-4 text-muted-foreground" />}
+                            </Button>
+                          </div>
+                          {signUpForm.formState.errors.password && (
+                            <p className="text-sm text-destructive">{signUpForm.formState.errors.password.message}</p>
+                          )}
+                        </div>
 
-                      <Button type="submit" className="w-full bg-red-600 hover:bg-red-700 text-white" disabled={loading}>
-                        {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        Create Account
-                      </Button>
-                    </form>
-                  </motion.div>
-                </TabsContent>
+                        <div className="space-y-2">
+                          <Label htmlFor="confirm-password">Confirm Password</Label>
+                          <Input
+                            id="confirm-password"
+                            type="password"
+                            {...signUpForm.register("confirmPassword")}
+                            disabled={loading}
+                          />
+                          {signUpForm.formState.errors.confirmPassword && (
+                            <p className="text-sm text-destructive">{signUpForm.formState.errors.confirmPassword.message}</p>
+                          )}
+                        </div>
+
+                        <Button type="submit" className="w-full bg-red-600 hover:bg-red-700 text-white" disabled={loading}>
+                          {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                          Create Account
+                        </Button>
+                      </form>
+                    </motion.div>
+                  </TabsContent>
+                )}
               </AnimatePresence>
             </Tabs>
           )}

@@ -14,6 +14,10 @@ export interface CartItem {
   productId?: string; // Added to link back to parent product
   variantId?: string;
   variantName?: string;
+  deviceIdentifierId?: string;
+  repairTicketId?: string;
+  serialOrImei?: string;
+  isRepairTicket?: boolean;
 }
 
 interface CartProps {
@@ -79,6 +83,16 @@ export const Cart = ({ items, onUpdateQuantity, onRemoveItem, onCheckout, onHold
               <h4 className="font-semibold text-sm leading-tight line-clamp-2 text-zinc-800 dark:text-zinc-100">
                 {item.name}
               </h4>
+              {item.serialOrImei && (
+                <p className="text-[11px] font-mono text-primary font-medium">
+                  IMEI/SN: {item.serialOrImei}
+                </p>
+              )}
+              {item.isRepairTicket && (
+                <span className="inline-block text-[10px] bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 px-1.5 py-0.5 rounded font-medium">
+                  Repair Ticket Payout
+                </span>
+              )}
               <p className="text-xs font-medium text-zinc-500">
                 {formatCurrency(item.price)}
               </p>
@@ -91,6 +105,7 @@ export const Cart = ({ items, onUpdateQuantity, onRemoveItem, onCheckout, onHold
                   variant="ghost"
                   className="h-7 w-7 rounded-md hover:bg-white dark:hover:bg-zinc-800 hover:shadow-sm"
                   onClick={() => onUpdateQuantity(item.id, Math.max(1, item.quantity - 1))}
+                  disabled={!!item.deviceIdentifierId || !!item.isRepairTicket}
                 >
                   <Minus className="h-3 w-3" />
                 </Button>
@@ -104,7 +119,7 @@ export const Cart = ({ items, onUpdateQuantity, onRemoveItem, onCheckout, onHold
                   variant="ghost"
                   className="h-7 w-7 rounded-md hover:bg-white dark:hover:bg-zinc-800 hover:shadow-sm"
                   onClick={() => onUpdateQuantity(item.id, Math.min(item.maxStock, item.quantity + 1))}
-                  disabled={item.quantity >= item.maxStock}
+                  disabled={item.quantity >= item.maxStock || !!item.deviceIdentifierId || !!item.isRepairTicket}
                 >
                   <Plus className="h-3 w-3" />
                 </Button>

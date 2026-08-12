@@ -40,7 +40,7 @@ ADD COLUMN IF NOT EXISTS variant_name TEXT;
 
 -- Update existing records to have a default variant_name
 UPDATE public.product_variants 
-SET variant_name = name 
+SET variant_name = 'Default' 
 WHERE variant_name IS NULL;
 
 -- Now make it NOT NULL

@@ -112,38 +112,82 @@ export const CheckoutDialog = ({
       const saleItems: CachedSaleItem[] = cartItems.map(item => ({
         id: crypto.randomUUID(),
         sale_id: newSaleId,
-        product_id: item.productId || item.id, // FIX: Use Parent ID for FK constraint
+        product_id: item.productId || (item.repairTicketId ? '00000000-0000-0000-0000-000000000000' : item.id), // Fallback UUID for repair items
         product_name: item.name,
         quantity: item.quantity,
         unit_price: item.price,
         subtotal: item.price * item.quantity,
-        variant_id: item.variantId, // Added variant_id
-        variant_name: item.variantName, // Added variant_name
+        variant_id: item.variantId,
+        variant_name: item.variantName,
+        device_identifier_id: item.deviceIdentifierId,
+        repair_ticket_id: item.repairTicketId,
         synced: false,
         lastModified: lastModified,
       }));
 
-      // 4. Create Stock Update Objects (Products OR Variants)
+      // 4. Create Stock Update & Serialized Device / Repair Ticket Lifecycle Updates
       const stockUpdatesPromises = cartItems.map(async (item) => {
+        // --- A. HANDLE SERIALIZED DEVICE (IMEI) SOLD ---
+        if (item.deviceIdentifierId) {
+          const device = await db.deviceIdentifiers.get(item.deviceIdentifierId);
+          if (device) {
+            const updatedDevice = {
+              ...device,
+              status: 'sold' as const,
+              customer_id: selectedCustomer === "walk-in" ? undefined : selectedCustomer,
+              synced: false,
+              lastModified: Date.now(),
+              updated_at: new Date().toISOString()
+            };
+            await syncService.queueOperation('deviceIdentifiers', 'update', updatedDevice);
+          }
+        }
+
+        // --- B. HANDLE REPAIR TICKET COMPLETED ---
+        if (item.repairTicketId) {
+          const ticket = await db.repairTickets.get(item.repairTicketId);
+          if (ticket) {
+            const updatedTicket = {
+              ...ticket,
+              status: 'completed' as const,
+              synced: false,
+              lastModified: Date.now(),
+              updated_at: new Date().toISOString()
+            };
+            await syncService.queueOperation('repairTickets', 'update', updatedTicket);
+
+            // Audit Log
+            const historyEntry = {
+              id: crypto.randomUUID(),
+              repair_ticket_id: ticket.id,
+              user_id: profile.id,
+              previous_status: ticket.status,
+              new_status: 'completed',
+              changed_by: profile.id,
+              notes: `Paid in full at POS (Receipt ${receiptNumber})`,
+              synced: false,
+              lastModified: Date.now(),
+              created_at: new Date().toISOString()
+            };
+            await syncService.queueOperation('repairTicketHistory', 'insert', historyEntry);
+          }
+          return []; // Repair payout does not decrement inventory stock
+        }
+
+        // --- C. HANDLE PRODUCT / VARIANT RETAIL STOCK ---
         if (item.variantId) {
-          // --- HANDLE VARIANT STOCK ---
           const variant = await db.productVariants.get(item.variantId);
-          // Use item.productId if available (it should be now), otherwise fallback to item.id (which might be wrong for variants but we try)
           const parentId = item.productId || item.id;
           const product = await db.products.get(parentId);
-
           const updates = [];
 
           if (variant) {
             const newVariantStock = (variant.stock_quantity || 0) - item.quantity;
-
-            // Update Variant Locally
             await db.productVariants.update(item.variantId, {
               stock_quantity: newVariantStock,
               lastModified: Date.now(),
               synced: false
             });
-
             updates.push({
               table: 'productVariants',
               data: {
@@ -155,38 +199,30 @@ export const CheckoutDialog = ({
             });
           }
 
-          // ALSO Update Parent Product Stock (Total Stock)
           if (product) {
             const newProductStock = (product.stock_quantity || 0) - item.quantity;
-
-            // Update Product Locally
-            // FIX: Use product.id, NOT item.id (which is the variant ID)
             await db.products.update(product.id, {
               stock_quantity: newProductStock,
               lastModified: Date.now(),
               synced: false
             });
-
             updates.push({
               table: 'products',
               data: {
-                id: product.id, // FIX: Use product.id
+                id: product.id,
                 stock_quantity: newProductStock,
                 lastModified: Date.now(),
                 synced: false
               }
             });
           }
-
-          return updates; // Return array of updates
-        } else {
-          // --- HANDLE MAIN PRODUCT STOCK (SIMPLE PRODUCT) ---
-          const product = await db.products.get(item.id);
+          return updates;
+        } else if (item.productId || item.id) {
+          const productIdToUse = item.productId || item.id;
+          const product = await db.products.get(productIdToUse);
           if (product) {
             const newStock = (product.stock_quantity || 0) - item.quantity;
-
-            // Update Local DB
-            await db.products.update(item.id, {
+            await db.products.update(productIdToUse, {
               stock_quantity: newStock,
               lastModified: Date.now(),
               synced: false
@@ -195,7 +231,7 @@ export const CheckoutDialog = ({
             return [{
               table: 'products',
               data: {
-                id: item.id,
+                id: productIdToUse,
                 stock_quantity: newStock,
                 lastModified: Date.now(),
                 synced: false,

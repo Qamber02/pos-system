@@ -18,6 +18,9 @@ port = 54334
 enabled = true
 port = 54335
 
+[analytics]
+enabled = false
+
 [auth]
 enabled = true
 site_url = "http://127.0.0.1:8080"

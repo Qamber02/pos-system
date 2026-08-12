@@ -1,4 +1,5 @@
 -- Allow admins to view ALL profiles (for Staff management page)
+DROP POLICY IF EXISTS "Admins can view all profiles" ON public.profiles;
 CREATE POLICY "Admins can view all profiles"
   ON public.profiles
   FOR SELECT

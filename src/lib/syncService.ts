@@ -73,6 +73,11 @@ class SyncService {
     console.log('Starting sync attempt...');
 
     try {
+      // Reset any previously failed items to give them a chance to retry
+      await db.syncQueue
+        .where('status').equals('failed')
+        .modify({ status: 'pending', retryCount: 0 });
+
       const { data: { user }, error: authError } = await supabase.auth.getUser();
       if (authError) {
         console.log('Sync skipped: Auth error (likely offline).', authError.message);
@@ -95,7 +100,13 @@ class SyncService {
         this.syncCustomers(user.id, force),
         this.syncSettings(user.id, force),
         this.syncProductVariants(user.id, force),
-        this.syncLoans(user.id, force)
+        this.syncLoans(user.id, force),
+        this.syncDeviceIdentifiers(user.id, force),
+        this.syncPartCompatibility(user.id, force),
+        this.syncRepairTickets(user.id, force),
+        this.syncRepairTicketHistory(user.id, force),
+        this.syncTechnicians(user.id, force),
+        this.syncRepairTicketParts(user.id, force)
       ]);
 
       console.log('Sync completed successfully');
@@ -115,7 +126,7 @@ class SyncService {
 
       const { data, error } = await supabase
         .from('products')
-        .select('id, name, description, barcode, retail_price, cost_price, stock_quantity, low_stock_threshold, category_id, user_id, updated_at')
+        .select('id, name, description, barcode, retail_price, cost_price, stock_quantity, low_stock_threshold, category_id, is_serialized, condition_grade, is_repair_part, user_id, updated_at')
         .eq('user_id', userId)
         .gt('updated_at', new Date(lastModifiedTime).toISOString());
 
@@ -219,9 +230,6 @@ class SyncService {
           updated_at: new Date().toISOString()
         };
 
-        // Save to local (which will trigger sync to remote via queue if we used queueOperation, 
-        // but here we just want to initialize local state. 
-        // Actually, better to let the user configure it, so just do nothing or insert local default)
         await db.settings.put({
           ...defaultSettings,
           id: userId,
@@ -241,7 +249,7 @@ class SyncService {
 
       let query = supabase
         .from('product_variants')
-        .select('id, product_id, variant_name, sku, price_adjustment, stock_quantity, is_active, user_id, updated_at')
+        .select('id, product_id, variant_name, sku, price_adjustment, stock_quantity, is_active, is_serialized, condition_grade, user_id, updated_at')
         .eq('user_id', userId);
 
       // Only filter by updated_at if we have local data
@@ -264,6 +272,8 @@ class SyncService {
             price_adjustment: v.price_adjustment,
             stock_quantity: v.stock_quantity,
             is_active: v.is_active,
+            is_serialized: v.is_serialized,
+            condition_grade: v.condition_grade,
             user_id: v.user_id,
             updated_at: v.updated_at,
             lastModified: new Date(v.updated_at).getTime(),
@@ -304,6 +314,156 @@ class SyncService {
     } catch (error) { console.error('Failed to sync loans:', error); }
   }
 
+  private async syncDeviceIdentifiers(userId: string, force: boolean) {
+    try {
+      const lastLocal = await db.deviceIdentifiers.orderBy('lastModified').last();
+      const lastModifiedTime = force ? 0 : (lastLocal ? lastLocal.lastModified + 1 : 0);
+
+      const { data, error } = await supabase
+        .from('device_identifiers')
+        .select('id, user_id, imei, serial_number, product_id, product_variant_id, condition_grade, status, cost, sell_price, customer_id, notes, updated_at')
+        .eq('user_id', userId)
+        .gt('updated_at', new Date(lastModifiedTime).toISOString());
+
+      if (error) throw error;
+      if (data && data.length > 0) {
+        console.log(`Syncing ${data.length} new/updated device identifiers...`);
+        await db.deviceIdentifiers.bulkPut(
+          data.map((d: any) => ({
+            ...d,
+            lastModified: new Date(d.updated_at).getTime(),
+            synced: true,
+          }))
+        );
+      }
+    } catch (error) { console.error('Failed to sync device identifiers:', error); }
+  }
+
+  private async syncPartCompatibility(userId: string, force: boolean) {
+    try {
+      const lastLocal = await db.partCompatibility.orderBy('lastModified').last();
+      const lastModifiedTime = force ? 0 : (lastLocal ? lastLocal.lastModified + 1 : 0);
+
+      const { data, error } = await supabase
+        .from('part_compatibility')
+        .select('id, user_id, product_id, product_variant_id, device_model, notes, updated_at')
+        .eq('user_id', userId)
+        .gt('updated_at', new Date(lastModifiedTime).toISOString());
+
+      if (error) throw error;
+      if (data && data.length > 0) {
+        console.log(`Syncing ${data.length} new/updated part compatibilities...`);
+        await db.partCompatibility.bulkPut(
+          data.map((pc: any) => ({
+            ...pc,
+            lastModified: new Date(pc.updated_at).getTime(),
+            synced: true,
+          }))
+        );
+      }
+    } catch (error) { console.error('Failed to sync part compatibility:', error); }
+  }
+
+  private async syncRepairTickets(userId: string, force: boolean) {
+    try {
+      const lastLocal = await db.repairTickets.orderBy('lastModified').last();
+      const lastModifiedTime = force ? 0 : (lastLocal ? lastLocal.lastModified + 1 : 0);
+
+      const { data, error } = await supabase
+        .from('repair_tickets')
+        .select('id, user_id, ticket_number, customer_id, device_identifier_id, device_name, serial_or_imei, issue_description, estimated_cost, deposit_paid, status, assigned_tech_id, notes, created_at, updated_at')
+        .eq('user_id', userId)
+        .gt('updated_at', new Date(lastModifiedTime).toISOString());
+
+      if (error) throw error;
+      if (data && data.length > 0) {
+        console.log(`Syncing ${data.length} new/updated repair tickets...`);
+        await db.repairTickets.bulkPut(
+          data.map((rt: any) => ({
+            ...rt,
+            lastModified: new Date(rt.updated_at).getTime(),
+            synced: true,
+          }))
+        );
+      }
+    } catch (error) { console.error('Failed to sync repair tickets:', error); }
+  }
+
+  private async syncRepairTicketHistory(userId: string, force: boolean) {
+    try {
+      const lastLocal = await db.repairTicketHistory.orderBy('lastModified').last();
+      const lastModifiedTime = force ? 0 : (lastLocal ? lastLocal.lastModified + 1 : 0);
+
+      const { data, error } = await supabase
+        .from('repair_ticket_status_history')
+        .select('id, repair_ticket_id, user_id, previous_status, new_status, changed_by, notes, created_at')
+        .eq('user_id', userId)
+        .gt('created_at', new Date(lastModifiedTime).toISOString());
+
+      if (error) throw error;
+      if (data && data.length > 0) {
+        console.log(`Syncing ${data.length} new/updated repair ticket history entries...`);
+        await db.repairTicketHistory.bulkPut(
+          data.map((rth: any) => ({
+            ...rth,
+            lastModified: new Date(rth.created_at).getTime(),
+            synced: true,
+          }))
+        );
+      }
+    } catch (error) { console.error('Failed to sync repair ticket history:', error); }
+  }
+
+  private async syncTechnicians(userId: string, force: boolean) {
+    try {
+      const lastLocal = await db.technicians.orderBy('lastModified').last();
+      const lastModifiedTime = force ? 0 : (lastLocal ? lastLocal.lastModified + 1 : 0);
+
+      const { data, error } = await supabase
+        .from('technicians')
+        .select('id, user_id, name, email, phone, specialty, status, updated_at')
+        .eq('user_id', userId)
+        .gt('updated_at', new Date(lastModifiedTime).toISOString());
+
+      if (error) throw error;
+      if (data && data.length > 0) {
+        console.log(`Syncing ${data.length} new/updated technicians...`);
+        await db.technicians.bulkPut(
+          data.map((tech: any) => ({
+            ...tech,
+            lastModified: new Date(tech.updated_at).getTime(),
+            synced: true,
+          }))
+        );
+      }
+    } catch (error) { console.error('Failed to sync technicians:', error); }
+  }
+
+  private async syncRepairTicketParts(userId: string, force: boolean) {
+    try {
+      const lastLocal = await db.repairTicketParts.orderBy('lastModified').last();
+      const lastModifiedTime = force ? 0 : (lastLocal ? lastLocal.lastModified + 1 : 0);
+
+      const { data, error } = await supabase
+        .from('repair_ticket_parts')
+        .select('id, user_id, repair_ticket_id, product_id, product_variant_id, quantity, unit_cost, unit_price, status, updated_at')
+        .eq('user_id', userId)
+        .gt('updated_at', new Date(lastModifiedTime).toISOString());
+
+      if (error) throw error;
+      if (data && data.length > 0) {
+        console.log(`Syncing ${data.length} new/updated repair ticket parts...`);
+        await db.repairTicketParts.bulkPut(
+          data.map((rtp: any) => ({
+            ...rtp,
+            lastModified: new Date(rtp.updated_at).getTime(),
+            synced: true,
+          }))
+        );
+      }
+    } catch (error) { console.error('Failed to sync repair ticket parts:', error); }
+  }
+
   // --- SYNC QUEUE PROCESSING ---
 
   private async processSyncQueue() {
@@ -321,14 +481,19 @@ class SyncService {
     if (pendingItems.length === 0) return;
 
     // SORT BY DEPENDENCY to avoid Foreign Key errors
-    // Order: Independent (Products, Customers, Categories) -> Parents (Sales) -> Children (SaleItems)
     const priority = {
       'products': 1,
       'customers': 1,
       'categories': 1,
       'settings': 1,
+      'technicians': 1,     // Independent
       'productVariants': 2, // Depends on products
+      'deviceIdentifiers': 2, // Depends on products/customers
+      'partCompatibility': 2, // Depends on products
+      'repairTickets': 3,   // Depends on customers/deviceIdentifiers
       'sales': 3,           // Depends on customers
+      'repairTicketHistory': 4, // Depends on repairTickets
+      'repairTicketParts': 4,   // Depends on repairTickets AND products
       'saleItems': 4,       // Depends on sales AND products
       'loans': 4            // Depends on customers
     };
@@ -362,7 +527,6 @@ class SyncService {
             status: 'failed',
             errorMessage: error.message || 'Unknown error'
           });
-          // Suppress annoying toast for user, just log it. The system will retry eventually or on restart.
           console.error(`Failed to sync ${item.table} item after 3 retries.`);
         } else {
           // Increment retry count and set back to pending
@@ -380,6 +544,12 @@ class SyncService {
       'productVariants': 'product_variants',
       'loans': 'customer_loans',
       'saleItems': 'sale_items',
+      'deviceIdentifiers': 'device_identifiers',
+      'partCompatibility': 'part_compatibility',
+      'repairTickets': 'repair_tickets',
+      'repairTicketHistory': 'repair_ticket_status_history',
+      'technicians': 'technicians',
+      'repairTicketParts': 'repair_ticket_parts',
     };
     return mapping[dexieTableName] || dexieTableName;
   }
@@ -393,11 +563,20 @@ class SyncService {
 
     // Fix for sale_items schema mismatch
     if (supabaseTable === 'sale_items') {
-      if (dataForSupabase.subtotal !== undefined) {
-        dataForSupabase.total_price = dataForSupabase.subtotal;
-        delete dataForSupabase.subtotal;
+      if (dataForSupabase.total_price !== undefined) {
+        dataForSupabase.subtotal = dataForSupabase.total_price;
+        delete dataForSupabase.total_price;
       }
-      // Variant fields are now supported on Supabase after migration
+      delete dataForSupabase.user_id;
+    }
+
+    // Ensure user_id matches active authenticated user to pass RLS (auth.uid() = user_id)
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user && supabaseTable !== 'profiles' && supabaseTable !== 'user_roles' && supabaseTable !== 'sale_items') {
+      if (!dataForSupabase.user_id || dataForSupabase.user_id !== user.id) {
+        console.log(`Setting user_id on ${supabaseTable} ${data.id} to active user ${user.id}`);
+        dataForSupabase.user_id = user.id;
+      }
     }
 
     console.log(`Syncing item: ${operation} on ${supabaseTable}`, data.id);
@@ -436,7 +615,11 @@ class SyncService {
           }
           break;
         case 'update':
-          ({ error } = await supabase.from(supabaseTable as any).update(dataForSupabase).eq('id', data.id));
+          if (supabaseTable === 'settings') {
+            ({ error } = await supabase.from(supabaseTable as any).upsert(dataForSupabase, { onConflict: 'user_id' }));
+          } else {
+            ({ error } = await supabase.from(supabaseTable as any).update(dataForSupabase).eq('id', data.id));
+          }
           break;
         case 'delete':
           ({ error } = await supabase.from(supabaseTable as any).delete().eq('id', data.id));

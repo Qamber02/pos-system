@@ -12,11 +12,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Plus, Edit, Trash2, Package, AlertTriangle, Layers, RefreshCw, Cloud, CloudOff } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Plus, Edit, Trash2, Package, AlertTriangle, Layers, RefreshCw, Cloud, CloudOff, Smartphone, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { db, CachedProduct, CachedCategory } from "@/lib/db";
 import { syncService } from "@/lib/syncService";
 import { useLiveQuery } from "dexie-react-hooks";
+import { DeviceIdentifierDialog } from "@/components/inventory/DeviceIdentifierDialog";
+import { PartCompatibilityDialog } from "@/components/inventory/PartCompatibilityDialog";
 
 // Extended interface for display
 interface ProductWithCategory extends CachedProduct {
@@ -31,6 +34,8 @@ const Products = () => {
   const navigate = useNavigate();
   const [productDialog, setProductDialog] = useState(false);
   const [categoryDialog, setCategoryDialog] = useState(false);
+  const [deviceDialogOpen, setDeviceDialogOpen] = useState(false);
+  const [compatDialogOpen, setCompatDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<CachedProduct | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const formatPrice = useFormatCurrency();
@@ -40,6 +45,19 @@ const Products = () => {
 
   // Offline-first data fetching
   const categories = useLiveQuery(() => db.categories.toArray()) || [];
+  const allVariants = useLiveQuery(() => db.productVariants.toArray()) || [];
+  const deviceIdentifiers = useLiveQuery(async () => {
+    const list = await db.deviceIdentifiers.toArray();
+    const prods = await db.products.toArray();
+    const prodMap = new Map(prods.map(p => [p.id, p.name]));
+    return list.map(d => ({ ...d, productName: d.product_id ? prodMap.get(d.product_id) : 'Unknown' }));
+  }) || [];
+  const partCompatibilities = useLiveQuery(async () => {
+    const list = await db.partCompatibility.toArray();
+    const prods = await db.products.toArray();
+    const prodMap = new Map(prods.map(p => [p.id, p.name]));
+    return list.map(pc => ({ ...pc, productName: pc.product_id ? prodMap.get(pc.product_id) : 'Unknown' }));
+  }) || [];
 
   const products = useLiveQuery(async () => {
     const allProducts = await db.products.toArray();
@@ -62,6 +80,9 @@ const Products = () => {
     cost_price: "",
     stock_quantity: "",
     low_stock_threshold: "10",
+    is_serialized: false,
+    is_repair_part: false,
+    condition_grade: "new",
   });
 
   const [variants, setVariants] = useState<any[]>([]);
@@ -119,6 +140,9 @@ const Products = () => {
         cost_price: parseFloat(productForm.cost_price) || 0,
         stock_quantity: parseInt(productForm.stock_quantity) || 0,
         low_stock_threshold: parseInt(productForm.low_stock_threshold) || 10,
+        is_serialized: productForm.is_serialized,
+        is_repair_part: productForm.is_repair_part,
+        condition_grade: productForm.condition_grade,
         user_id: user.id,
         lastModified: Date.now(),
         synced: false,
@@ -153,6 +177,8 @@ const Products = () => {
             price_adjustment: parseFloat(variant.price_adjustment) || 0,
             stock_quantity: parseInt(variant.stock_quantity) || 0,
             is_active: true,
+            is_serialized: productForm.is_serialized,
+            condition_grade: productForm.condition_grade,
             user_id: user.id,
             synced: false,
             lastModified: Date.now(),
@@ -271,9 +297,12 @@ const Products = () => {
         barcode: product.barcode || "",
         category_id: product.category_id || "",
         retail_price: product.retail_price.toString(),
-        cost_price: product.cost_price.toString(),
+        cost_price: (product.cost_price || 0).toString(),
         stock_quantity: product.stock_quantity.toString(),
         low_stock_threshold: product.low_stock_threshold.toString(),
+        is_serialized: product.is_serialized || false,
+        is_repair_part: product.is_repair_part || false,
+        condition_grade: product.condition_grade || "new",
       });
     } else {
       resetProductForm();
@@ -306,6 +335,9 @@ const Products = () => {
       cost_price: "",
       stock_quantity: "",
       low_stock_threshold: "10",
+      is_serialized: false,
+      is_repair_part: false,
+      condition_grade: "new",
     });
     setVariants([]);
     setVariantForm({ name: "", sku: "", price_adjustment: "0", stock_quantity: "" });
@@ -341,6 +373,12 @@ const Products = () => {
             <TabsList>
               <TabsTrigger value="products">Products</TabsTrigger>
               <TabsTrigger value="categories">Categories</TabsTrigger>
+              <TabsTrigger value="devices" className="flex items-center gap-1.5">
+                <Smartphone className="h-4 w-4" /> Serialized Devices
+              </TabsTrigger>
+              <TabsTrigger value="compatibilities" className="flex items-center gap-1.5">
+                <Wrench className="h-4 w-4" /> Part Compatibility
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="products" className="space-y-4">
@@ -366,7 +404,7 @@ const Products = () => {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Name</TableHead>
-                        <TableHead>Category</TableHead>
+                        <TableHead>Type / Category</TableHead>
                         <TableHead>Price</TableHead>
                         <TableHead>Stock</TableHead>
                         <TableHead>Sync</TableHead>
@@ -379,13 +417,30 @@ const Products = () => {
                         const isLowStock = product.stock_quantity <= product.low_stock_threshold;
                         return (
                           <TableRow key={product.id}>
-                            <TableCell className="font-medium">{product.name}</TableCell>
-                            <TableCell>
-                              {product.categoryName && (
-                                <Badge style={{ backgroundColor: product.categoryColor }}>
-                                  {product.categoryName}
-                                </Badge>
+                            <TableCell className="font-medium">
+                              <div>{product.name}</div>
+                              {product.barcode && (
+                                <div className="text-xs text-muted-foreground font-mono">{product.barcode}</div>
                               )}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex flex-wrap gap-1 items-center">
+                                {product.categoryName && (
+                                  <Badge style={{ backgroundColor: product.categoryColor }}>
+                                    {product.categoryName}
+                                  </Badge>
+                                )}
+                                {product.is_serialized && (
+                                  <Badge variant="outline" className="text-xs flex items-center gap-1 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border-blue-200">
+                                    <Smartphone className="h-3 w-3" /> Serialized
+                                  </Badge>
+                                )}
+                                {product.is_repair_part && (
+                                  <Badge variant="outline" className="text-xs flex items-center gap-1 bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border-purple-200">
+                                    <Wrench className="h-3 w-3" /> Repair Part
+                                  </Badge>
+                                )}
+                              </div>
                             </TableCell>
                             <TableCell>{formatCurrency(product.retail_price)}</TableCell>
                             <TableCell>{product.stock_quantity}</TableCell>
@@ -495,6 +550,110 @@ const Products = () => {
                 ))}
               </div>
             </TabsContent>
+
+            {/* Serialized Devices (IMEIs) Tab */}
+            <TabsContent value="devices" className="space-y-4">
+              <div className="flex justify-between items-center">
+                <p className="text-muted-foreground">
+                  Track individual physical items with IMEI or Serial numbers
+                </p>
+                <Button onClick={() => setDeviceDialogOpen(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Register Device (IMEI)
+                </Button>
+              </div>
+
+              <Card>
+                <CardContent className="pt-6">
+                  {deviceIdentifiers.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      No device identifiers registered yet. Click "Register Device (IMEI)" to add one.
+                    </div>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>IMEI / Serial</TableHead>
+                          <TableHead>Product</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Grade</TableHead>
+                          <TableHead>Cost</TableHead>
+                          <TableHead>Target Sell Price</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {deviceIdentifiers.map((dev) => (
+                          <TableRow key={dev.id}>
+                            <TableCell className="font-mono text-sm font-semibold">
+                              {dev.imei || dev.serial_number || 'N/A'}
+                            </TableCell>
+                            <TableCell>{dev.productName}</TableCell>
+                            <TableCell>
+                              <Badge variant={dev.status === 'in_stock' ? 'default' : 'secondary'}>
+                                {dev.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline">{dev.condition_grade || 'new'}</Badge>
+                            </TableCell>
+                            <TableCell>{formatCurrency(dev.cost || 0)}</TableCell>
+                            <TableCell>{formatCurrency(dev.sell_price || 0)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Part Compatibility Tab */}
+            <TabsContent value="compatibilities" className="space-y-4">
+              <div className="flex justify-between items-center">
+                <p className="text-muted-foreground">
+                  Map repair parts and components to compatible smartphone/device models
+                </p>
+                <Button onClick={() => setCompatDialogOpen(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Part Mapping
+                </Button>
+              </div>
+
+              <Card>
+                <CardContent className="pt-6">
+                  {partCompatibilities.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      No part compatibility mappings created yet. Click "Add Part Mapping" to link repair parts to device models.
+                    </div>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Repair Part Product</TableHead>
+                          <TableHead>Compatible Device Model</TableHead>
+                          <TableHead>Notes</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {partCompatibilities.map((pc) => (
+                          <TableRow key={pc.id}>
+                            <TableCell className="font-medium">{pc.productName}</TableCell>
+                            <TableCell>
+                              <Badge variant="secondary" className="font-semibold">
+                                {pc.device_model}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-muted-foreground text-sm">
+                              {pc.notes || '-'}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
           </Tabs>
         </main>
 
@@ -537,6 +696,53 @@ const Products = () => {
                   </Select>
                 </div>
               </div>
+
+              {/* Hardware & Repair Attributes */}
+              <div className="border rounded-lg p-3 bg-muted/20 grid grid-cols-2 gap-4">
+                <div className="flex items-center justify-between space-x-2">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="is_serialized" className="cursor-pointer">Serialized (IMEI Tracking)</Label>
+                    <p className="text-xs text-muted-foreground">Each item has a unique IMEI or Serial</p>
+                  </div>
+                  <Switch
+                    id="is_serialized"
+                    checked={productForm.is_serialized}
+                    onCheckedChange={(checked) => setProductForm({ ...productForm, is_serialized: checked })}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between space-x-2">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="is_repair_part" className="cursor-pointer">Repair Part / Component</Label>
+                    <p className="text-xs text-muted-foreground">Consumable used in phone repairs</p>
+                  </div>
+                  <Switch
+                    id="is_repair_part"
+                    checked={productForm.is_repair_part}
+                    onCheckedChange={(checked) => setProductForm({ ...productForm, is_repair_part: checked })}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="condition_grade">Default Condition / Grade</Label>
+                <Select
+                  value={productForm.condition_grade}
+                  onValueChange={(value) => setProductForm({ ...productForm, condition_grade: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="new">Brand New</SelectItem>
+                    <SelectItem value="refurbished_a">Refurbished Grade A</SelectItem>
+                    <SelectItem value="refurbished_b">Refurbished Grade B</SelectItem>
+                    <SelectItem value="used">Used / Pre-owned</SelectItem>
+                    <SelectItem value="defective">Defective / For Parts</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="description">Description</Label>
                 <Input
@@ -737,8 +943,24 @@ const Products = () => {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Device Identifier Registration Dialog */}
+        <DeviceIdentifierDialog
+          open={deviceDialogOpen}
+          onOpenChange={setDeviceDialogOpen}
+          products={products}
+          variants={allVariants}
+        />
+
+        {/* Part Compatibility Mapping Dialog */}
+        <PartCompatibilityDialog
+          open={compatDialogOpen}
+          onOpenChange={setCompatDialogOpen}
+          products={products}
+          variants={allVariants}
+        />
       </div>
-    </div >
+    </div>
   );
 };
 

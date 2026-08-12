@@ -14,6 +14,7 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import defaultLogo from "@/assets/default-logo.png";
 import { db } from "@/lib/db";
+import { seedDemoDataForUser } from "@/lib/seedDemoData";
 
 const Settings = () => {
   const navigate = useNavigate();
@@ -515,6 +516,23 @@ const Settings = () => {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="flex items-center justify-between p-4 border rounded-lg bg-primary/5 border-primary/10 mb-4">
+                <div className="space-y-1">
+                  <h4 className="font-medium text-primary">Load Sample Demo Data</h4>
+                  <p className="text-sm text-muted-foreground">
+                    Populate demo products, IMEIs, repair tickets, technicians, and customers into your shop workspace.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    await seedDemoDataForUser();
+                  }}
+                >
+                  Load Demo Data
+                </Button>
+              </div>
+
               <div className="flex items-center justify-between p-4 border rounded-lg bg-destructive/5 border-destructive/10">
                 <div className="space-y-1">
                   <h4 className="font-medium text-destructive">Reset Local Data</h4>

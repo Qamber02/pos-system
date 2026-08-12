@@ -21,6 +21,7 @@ BEGIN
 END $$;
 
 -- 4. Update RLS to allow developers to do EVERYTHING
+DROP POLICY IF EXISTS "Developers can do everything" ON public.profiles;
 CREATE POLICY "Developers can do everything" 
 ON public.profiles 
 FOR ALL 
@@ -29,6 +30,7 @@ USING (
 );
 
 -- 5. Allow developers to manage roles
+DROP POLICY IF EXISTS "Developers can manage roles" ON public.user_roles;
 CREATE POLICY "Developers can manage roles" 
 ON public.user_roles 
 FOR ALL 

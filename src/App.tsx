@@ -16,6 +16,7 @@ import Customers from "./pages/Customers";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings";
 import Loans from "./pages/Loans";
+import RepairTickets from "./pages/RepairTickets";
 import Staff from "./pages/Staff";
 import ControlPanel from "./pages/ControlPanel";
 import NotFound from "./pages/NotFound";
@@ -120,13 +121,14 @@ const AppContent = () => {
     <>
       <Toaster />
       <Sonner />
-      <HashRouter>
+      <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Routes>
           <Route path="/" element={<Navigate to="/pos" replace />} />
           <Route path="/auth" element={<Auth />} />
           <Route path="/update-password" element={<UpdatePassword />} />
           <Route path="/pos" element={<POS />} />
           <Route path="/products" element={<Products />} />
+          <Route path="/repairs" element={<RepairTickets />} />
           <Route path="/customers" element={<Customers />} />
           <Route path="/loans" element={<Loans />} />
           <Route path="/reports" element={<Reports />} /> {/* Visible to all */}

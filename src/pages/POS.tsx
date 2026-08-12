@@ -9,8 +9,9 @@ import { Cart, CartItem } from "@/components/Cart";
 import { CheckoutDialog } from "@/components/CheckoutDialog";
 import { ReturnDialog } from "@/components/ReturnDialog";
 import { HoldCartDialog } from "@/components/HoldCartDialog";
+import { AttachRepairDialog } from "@/components/repair/AttachRepairDialog";
 import { Button } from "@/components/ui/button";
-import { RotateCcw, FolderOpen } from "lucide-react";
+import { RotateCcw, FolderOpen, Wrench } from "lucide-react";
 import { toast } from "sonner";
 // --- Import our new hooks and service ---
 import { useUserRole } from "@/hooks/useUserRole";
@@ -33,25 +34,54 @@ const POS = () => {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [discount, setDiscount] = useState(0);
-  // const [taxRate, setTaxRate] = useState(0); // This is now from settings
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
   const [holdCartOpen, setHoldCartOpen] = useState(false);
+  const [attachRepairOpen, setAttachRepairOpen] = useState(false);
   const [variantSelectorOpen, setVariantSelectorOpen] = useState(false);
   const [selectedProductForVariant, setSelectedProductForVariant] = useState<CachedProduct | null>(null);
 
-  // Barcode Scanner Logic
+  // Barcode Scanner Logic (Supports Products, Variants & IMEI / Serial Numbers)
   useBarcodeScanner({
     onScan: async (barcode) => {
       console.log("Scanned barcode:", barcode);
       try {
+        // 1. Try finding retail product
         const product = await db.products.where('barcode').equals(barcode).first();
         if (product) {
           handleAddToCart(product);
-          toast.success(`Scanned: ${product.name}`);
-        } else {
-          toast.error(`Product not found for barcode: ${barcode}`);
+          toast.success(`Scanned product: ${product.name}`);
+          return;
         }
+
+        // 2. Try finding serialized device (IMEI / Serial Number)
+        const device = await db.deviceIdentifiers
+          .filter(d => (d.imei === barcode || d.serial_number === barcode) && d.status === 'in_stock')
+          .first();
+
+        if (device) {
+          const parentProduct = await db.products.get(device.product_id);
+          const price = device.sell_price || parentProduct?.retail_price || 0;
+          const name = parentProduct ? `${parentProduct.name} (${device.condition_grade || 'Serial'})` : `Device (${barcode})`;
+
+          const item: CartItem = {
+            id: `device-${device.id}`,
+            name,
+            price,
+            quantity: 1,
+            maxStock: 1,
+            productId: device.product_id,
+            variantId: device.product_variant_id || undefined,
+            deviceIdentifierId: device.id,
+            serialOrImei: device.imei || device.serial_number || undefined,
+          };
+
+          setCartItems(prev => [...prev, item]);
+          toast.success(`Added Serialized Unit: ${barcode}`);
+          return;
+        }
+
+        toast.error(`No product or available IMEI found for: ${barcode}`);
       } catch (error) {
         console.error("Error scanning barcode:", error);
       }
@@ -247,6 +277,16 @@ const POS = () => {
                 <Button
                   variant="ghost"
                   size="sm"
+                  onClick={() => setAttachRepairOpen(true)}
+                  className="gap-2 h-10 px-4 hover:bg-primary/15 hover:text-primary font-medium transition-[var(--transition-smooth)]"
+                >
+                  <Wrench className="h-5 w-5 text-primary" />
+                  <span className="hidden lg:inline">Attach Repair</span>
+                </Button>
+                <div className="w-px h-7 bg-border/70" />
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setHoldCartOpen(true)}
                   className="gap-2 h-10 px-4 hover:bg-primary/15 hover:text-primary font-medium transition-[var(--transition-smooth)]"
                 >
@@ -265,6 +305,14 @@ const POS = () => {
                 </Button>
               </div>
               <div className="md:hidden flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAttachRepairOpen(true)}
+                  className="gap-2"
+                >
+                  <Wrench className="h-4 w-4" />
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"
@@ -354,6 +402,15 @@ const POS = () => {
         open={holdCartOpen}
         onOpenChange={setHoldCartOpen}
         onLoadCart={handleLoadCart}
+      />
+
+      <AttachRepairDialog
+        open={attachRepairOpen}
+        onOpenChange={setAttachRepairOpen}
+        onAttachRepair={(item) => {
+          setCartItems(prev => [...prev, item]);
+          toast.success("Attached repair ticket to cart");
+        }}
       />
 
       <VariantSelector

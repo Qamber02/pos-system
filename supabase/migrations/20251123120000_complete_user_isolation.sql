@@ -19,6 +19,11 @@ DROP POLICY IF EXISTS "Authenticated users can view profiles" ON public.profiles
 DROP POLICY IF EXISTS "Authenticated users can view variants" ON public.product_variants;
 
 -- PRODUCTS: Complete user isolation
+DROP POLICY IF EXISTS "users_own_products_select" ON public.products;
+DROP POLICY IF EXISTS "users_own_products_insert" ON public.products;
+DROP POLICY IF EXISTS "users_own_products_update" ON public.products;
+DROP POLICY IF EXISTS "users_own_products_delete" ON public.products;
+
 CREATE POLICY "users_own_products_select" ON public.products
   FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "users_own_products_insert" ON public.products
@@ -29,6 +34,11 @@ CREATE POLICY "users_own_products_delete" ON public.products
   FOR DELETE USING (auth.uid() = user_id);
 
 -- CATEGORIES: Complete user isolation
+DROP POLICY IF EXISTS "users_own_categories_select" ON public.categories;
+DROP POLICY IF EXISTS "users_own_categories_insert" ON public.categories;
+DROP POLICY IF EXISTS "users_own_categories_update" ON public.categories;
+DROP POLICY IF EXISTS "users_own_categories_delete" ON public.categories;
+
 CREATE POLICY "users_own_categories_select" ON public.categories
   FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "users_own_categories_insert" ON public.categories
@@ -39,6 +49,11 @@ CREATE POLICY "users_own_categories_delete" ON public.categories
   FOR DELETE USING (auth.uid() = user_id);
 
 -- CUSTOMERS: Complete user isolation
+DROP POLICY IF EXISTS "users_own_customers_select" ON public.customers;
+DROP POLICY IF EXISTS "users_own_customers_insert" ON public.customers;
+DROP POLICY IF EXISTS "users_own_customers_update" ON public.customers;
+DROP POLICY IF EXISTS "users_own_customers_delete" ON public.customers;
+
 CREATE POLICY "users_own_customers_select" ON public.customers
   FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "users_own_customers_insert" ON public.customers
@@ -49,6 +64,11 @@ CREATE POLICY "users_own_customers_delete" ON public.customers
   FOR DELETE USING (auth.uid() = user_id);
 
 -- SALES: Complete user isolation
+DROP POLICY IF EXISTS "users_own_sales_select" ON public.sales;
+DROP POLICY IF EXISTS "users_own_sales_insert" ON public.sales;
+DROP POLICY IF EXISTS "users_own_sales_update" ON public.sales;
+DROP POLICY IF EXISTS "users_own_sales_delete" ON public.sales;
+
 CREATE POLICY "users_own_sales_select" ON public.sales
   FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "users_own_sales_insert" ON public.sales
@@ -59,6 +79,9 @@ CREATE POLICY "users_own_sales_delete" ON public.sales
   FOR DELETE USING (auth.uid() = user_id);
 
 -- SALE_ITEMS: Access through parent sale's user_id
+DROP POLICY IF EXISTS "users_own_sale_items_select" ON public.sale_items;
+DROP POLICY IF EXISTS "users_own_sale_items_insert" ON public.sale_items;
+
 CREATE POLICY "users_own_sale_items_select" ON public.sale_items
   FOR SELECT USING (
     EXISTS (
@@ -77,6 +100,11 @@ CREATE POLICY "users_own_sale_items_insert" ON public.sale_items
   );
 
 -- SETTINGS: Complete user isolation
+DROP POLICY IF EXISTS "users_own_settings_select" ON public.settings;
+DROP POLICY IF EXISTS "users_own_settings_insert" ON public.settings;
+DROP POLICY IF EXISTS "users_own_settings_update" ON public.settings;
+DROP POLICY IF EXISTS "users_own_settings_delete" ON public.settings;
+
 CREATE POLICY "users_own_settings_select" ON public.settings
   FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "users_own_settings_insert" ON public.settings
@@ -87,6 +115,11 @@ CREATE POLICY "users_own_settings_delete" ON public.settings
   FOR DELETE USING (auth.uid() = user_id);
 
 -- HELD_CARTS: Complete user isolation
+DROP POLICY IF EXISTS "users_own_held_carts_select" ON public.held_carts;
+DROP POLICY IF EXISTS "users_own_held_carts_insert" ON public.held_carts;
+DROP POLICY IF EXISTS "users_own_held_carts_update" ON public.held_carts;
+DROP POLICY IF EXISTS "users_own_held_carts_delete" ON public.held_carts;
+
 CREATE POLICY "users_own_held_carts_select" ON public.held_carts
   FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "users_own_held_carts_insert" ON public.held_carts
@@ -97,6 +130,11 @@ CREATE POLICY "users_own_held_carts_delete" ON public.held_carts
   FOR DELETE USING (auth.uid() = user_id);
 
 -- PRODUCT_VARIANTS: Complete user isolation
+DROP POLICY IF EXISTS "users_own_variants_select" ON public.product_variants;
+DROP POLICY IF EXISTS "users_own_variants_insert" ON public.product_variants;
+DROP POLICY IF EXISTS "users_own_variants_update" ON public.product_variants;
+DROP POLICY IF EXISTS "users_own_variants_delete" ON public.product_variants;
+
 CREATE POLICY "users_own_variants_select" ON public.product_variants
   FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "users_own_variants_insert" ON public.product_variants
@@ -107,6 +145,11 @@ CREATE POLICY "users_own_variants_delete" ON public.product_variants
   FOR DELETE USING (auth.uid() = user_id);
 
 -- CUSTOMER_LOANS: Complete user isolation
+DROP POLICY IF EXISTS "users_own_loans_select" ON public.customer_loans;
+DROP POLICY IF EXISTS "users_own_loans_insert" ON public.customer_loans;
+DROP POLICY IF EXISTS "users_own_loans_update" ON public.customer_loans;
+DROP POLICY IF EXISTS "users_own_loans_delete" ON public.customer_loans;
+
 CREATE POLICY "users_own_loans_select" ON public.customer_loans
   FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "users_own_loans_insert" ON public.customer_loans
@@ -117,6 +160,9 @@ CREATE POLICY "users_own_loans_delete" ON public.customer_loans
   FOR DELETE USING (auth.uid() = user_id);
 
 -- PROFILES: Users can only view/update their own profile
+DROP POLICY IF EXISTS "users_own_profile_select" ON public.profiles;
+DROP POLICY IF EXISTS "users_own_profile_update" ON public.profiles;
+
 CREATE POLICY "users_own_profile_select" ON public.profiles
   FOR SELECT USING (auth.uid() = id);
 CREATE POLICY "users_own_profile_update" ON public.profiles

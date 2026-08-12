@@ -13,6 +13,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CalendarIcon, Download, Eye, FileSpreadsheet } from "lucide-react";
 import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { format, startOfMonth, endOfMonth } from "date-fns";
 import { toast } from "sonner";
 import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell, Legend } from "recharts";
@@ -76,7 +77,7 @@ const Reports = () => {
     product_name,
     quantity,
     unit_price,
-    total_price
+    subtotal
   )
     `)
         .order("created_at", { ascending: false });
@@ -117,57 +118,81 @@ const Reports = () => {
 
   const exportToExcel = async () => {
     try {
-      toast.loading("Generating professional report...");
+      toast.loading("Generating styled executive report with charts...");
 
-      // Fetch all products with cost prices for profit calculation
+      // Fetch products for cost mapping
       const { data: products } = await supabase
         .from("products")
         .select("id, name, cost_price, retail_price");
 
       const productCostMap = new Map(
-        products?.map(p => [p.id, { cost: Number(p.cost_price || 0), retail: Number(p.retail_price) }]) || []
+        products?.map(p => [p.name.toLowerCase().trim(), { cost: Number(p.cost_price || 0), retail: Number(p.retail_price || 0) }]) || []
       );
 
-      // --- 1. Calculate Metrics ---
-
-      // Daily Data (for graphs)
-      const dailyMap = new Map<string, { revenue: number; profit: number; transactions: number }>();
-
-      // Product Data
+      // Calculations & Aggregations
+      const dailyMap = new Map<string, { revenue: number; profit: number; transactions: number; itemsSold: number }>();
       const productStatsMap = new Map<string, { revenue: number; profit: number; quantity: number }>();
+      const paymentMap = new Map<string, { count: number; total: number }>();
+      const itemizedData: any[][] = [];
 
       let totalRev = 0;
       let totalCst = 0;
+      let totalUnitsSold = 0;
       let todayRev = 0;
       let todayProfit = 0;
       const todayStr = format(new Date(), "yyyy-MM-dd");
 
       filteredSales.forEach(sale => {
         const dateStr = format(new Date(sale.created_at), "yyyy-MM-dd");
+        const dateTimeStr = format(new Date(sale.created_at), "yyyy-MM-dd HH:mm");
         const isToday = dateStr === todayStr;
+        const customerName = sale.customers?.name || "Walk-in Customer";
+        const paymentMethod = (sale.payment_method || "cash").toUpperCase();
+
+        const pPay = paymentMap.get(paymentMethod) || { count: 0, total: 0 };
+        pPay.count += 1;
+        pPay.total += Number(sale.total_amount || 0);
+        paymentMap.set(paymentMethod, pPay);
 
         let saleCost = 0;
+        let saleItemsCount = 0;
 
         sale.sale_items?.forEach(item => {
-          const productId = products?.find(p => p.name === item.product_name)?.id;
-          const costInfo = productId ? productCostMap.get(productId) : null;
-          const unitCost = costInfo?.cost || Number(item.unit_price) * 0.6; // Fallback to 60% cost
-          const itemCost = unitCost * item.quantity;
-          // FIX: Use total_price, fallback to subtotal if missing
-          const itemRevenue = Number(item.total_price || item.subtotal || 0);
+          const prodName = item.product_name || "Unknown Product";
+          const qty = Number(item.quantity || 1);
+          const unitPrice = Number(item.unit_price || 0);
+          const itemRevenue = Number(item.subtotal || item.total_price || (unitPrice * qty));
+
+          const costInfo = productCostMap.get(prodName.toLowerCase().trim());
+          const unitCost = costInfo ? costInfo.cost : unitPrice * 0.6;
+          const itemCost = unitCost * qty;
           const itemProfit = itemRevenue - itemCost;
 
           saleCost += itemCost;
+          saleItemsCount += qty;
+          totalUnitsSold += qty;
 
-          // Update Product Stats
-          const pStats = productStatsMap.get(item.product_name) || { revenue: 0, profit: 0, quantity: 0 };
+          const pStats = productStatsMap.get(prodName) || { revenue: 0, profit: 0, quantity: 0 };
           pStats.revenue += itemRevenue;
           pStats.profit += itemProfit;
-          pStats.quantity += item.quantity;
-          productStatsMap.set(item.product_name, pStats);
+          pStats.quantity += qty;
+          productStatsMap.set(prodName, pStats);
+
+          itemizedData.push([
+            sale.receipt_number,
+            dateTimeStr,
+            customerName,
+            prodName,
+            qty,
+            Number(unitPrice.toFixed(2)),
+            Number(itemRevenue.toFixed(2)),
+            Number(unitCost.toFixed(2)),
+            Number(itemProfit.toFixed(2)),
+            paymentMethod
+          ]);
         });
 
-        const saleRevenue = Number(sale.total_amount);
+        const saleRevenue = Number(sale.total_amount || 0);
         const saleProfit = saleRevenue - saleCost;
 
         totalRev += saleRevenue;
@@ -178,11 +203,11 @@ const Reports = () => {
           todayProfit += saleProfit;
         }
 
-        // Update Daily Stats
-        const dStats = dailyMap.get(dateStr) || { revenue: 0, profit: 0, transactions: 0 };
+        const dStats = dailyMap.get(dateStr) || { revenue: 0, profit: 0, transactions: 0, itemsSold: 0 };
         dStats.revenue += saleRevenue;
         dStats.profit += saleProfit;
         dStats.transactions += 1;
+        dStats.itemsSold += saleItemsCount;
         dailyMap.set(dateStr, dStats);
       });
 
@@ -190,94 +215,478 @@ const Reports = () => {
       const profMargin = totalRev > 0 ? (totalProf / totalRev) * 100 : 0;
       const todayMargin = todayRev > 0 ? (todayProfit / todayRev) * 100 : 0;
 
-      // --- 2. Prepare Sheet Data ---
+      // Initialize ExcelJS Workbook
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = "POS Shopping System";
+      workbook.created = new Date();
 
-      // --- 2. Prepare Sheet Data ---
+      // --- Helper: Generate Visual Canvas Bar Chart Image ---
+      const createChartCanvasPng = (
+        chartTitle: string,
+        labels: string[],
+        series1: { name: string; values: number[]; color: string },
+        series2?: { name: string; values: number[]; color: string }
+      ): string => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 640;
+        canvas.height = 300;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return '';
 
-      // Sheet 1: Executive Dashboard (Summary)
-      const dashboardData = [
-        { Label: "EXECUTIVE SUMMARY", Value: "" },
-        { Label: `Report Generated: ${format(new Date(), "PPP HH:mm")}`, Value: "" },
-        { Label: "", Value: "" },
-        { Label: "OVERALL PERFORMANCE", Value: "" },
-        { Label: "Total Revenue", Value: totalRev },
-        { Label: "Total Profit", Value: totalProf },
-        { Label: "Profit Margin", Value: `${profMargin.toFixed(2)}%` },
-        { Label: "Total Transactions", Value: filteredSales.length },
-        { Label: "Avg Transaction Value", Value: filteredSales.length > 0 ? totalRev / filteredSales.length : 0 },
-        { Label: "", Value: "" },
-        { Label: "TODAY'S PERFORMANCE", Value: "" },
-        { Label: "Sales Today", Value: todayRev },
-        { Label: "Profit Today", Value: todayProfit },
-        { Label: "Today's Margin", Value: `${todayMargin.toFixed(2)}%` },
-        { Label: "", Value: "" },
-        { Label: "TOP 5 PRODUCTS (REVENUE)", Value: "" },
-      ];
+        // White background
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, 640, 300);
 
-      // Add Top 5 Products to Dashboard
-      const sortedProducts = Array.from(productStatsMap.entries())
-        .sort((a, b) => b[1].revenue - a[1].revenue)
-        .slice(0, 5);
+        // Dark Top Header Banner
+        ctx.fillStyle = '#1E293B';
+        ctx.fillRect(0, 0, 640, 38);
 
-      sortedProducts.forEach(([name, stats]) => {
-        dashboardData.push({ Label: name, Value: stats.revenue });
-      });
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 13px "Segoe UI", sans-serif';
+        ctx.fillText(chartTitle, 16, 24);
 
-      // Sheet 2: Daily Sales (For Graphs)
-      const dailyData = Array.from(dailyMap.entries())
-        .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([date, stats]) => ({
-          DATE: date,
-          REVENUE: stats.revenue,
-          PROFIT: stats.profit,
-          TRANSACTIONS: stats.transactions,
-          AVG_ORDER_VALUE: stats.revenue / stats.transactions
-        }));
+        // Chart Area Bounds
+        const startX = 65;
+        const startY = 250;
+        const chartW = 540;
+        const chartH = 180;
 
-      // Sheet 3: Product Performance
-      const productData = Array.from(productStatsMap.entries())
-        .sort((a, b) => b[1].profit - a[1].profit)
-        .map(([name, stats]) => ({
-          PRODUCT: name,
-          UNITS_SOLD: stats.quantity,
-          REVENUE: stats.revenue,
-          PROFIT: stats.profit,
-          MARGIN_PERCENT: stats.revenue > 0 ? (stats.profit / stats.revenue) * 100 : 0
-        }));
+        const maxVal = Math.max(
+          ...series1.values,
+          ...(series2 ? series2.values : [0]),
+          10
+        );
 
-      // Sheet 4: Raw Transactions
-      const transactionData = filteredSales.map(sale => ({
-        RECEIPT: sale.receipt_number,
-        DATE: format(new Date(sale.created_at), "yyyy-MM-dd HH:mm"),
-        CUSTOMER: sale.customers?.name || "Walk-in",
-        PAYMENT: sale.payment_method.toUpperCase(),
-        TOTAL: Number(sale.total_amount),
-        ITEMS: sale.sale_items?.map(i => `${i.quantity}x ${i.product_name}`).join(", ")
-      }));
+        // Y Gridlines
+        ctx.strokeStyle = '#E2E8F0';
+        ctx.lineWidth = 1;
+        for (let i = 0; i <= 4; i++) {
+          const y = startY - (chartH / 4) * i;
+          ctx.beginPath();
+          ctx.moveTo(startX, y);
+          ctx.lineTo(startX + chartW, y);
+          ctx.stroke();
 
-      // --- 3. Create Workbook ---
-      const wb = XLSX.utils.book_new();
-
-      // Helper to append sheet with auto-width
-      const appendSheet = (data: any[], name: string, colWidths: number[] = []) => {
-        const ws = XLSX.utils.json_to_sheet(data);
-        if (colWidths.length) {
-          ws['!cols'] = colWidths.map(w => ({ wch: w }));
+          const valLabel = Math.round((maxVal / 4) * i);
+          ctx.fillStyle = '#64748B';
+          ctx.font = '10px "Segoe UI", sans-serif';
+          ctx.textAlign = 'right';
+          ctx.fillText(`$${valLabel}`, startX - 8, y + 3);
         }
-        XLSX.utils.book_append_sheet(wb, ws, name);
+
+        // Legend Right Side of Banner
+        let legX = 400;
+        ctx.fillStyle = series1.color;
+        ctx.fillRect(legX, 12, 12, 12);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 11px "Segoe UI", sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(series1.name, legX + 16, 22);
+
+        if (series2) {
+          legX += 100;
+          ctx.fillStyle = series2.color;
+          ctx.fillRect(legX, 12, 12, 12);
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillText(series2.name, legX + 16, 22);
+        }
+
+        // Bars
+        const numGroups = Math.max(labels.length, 1);
+        const groupW = chartW / numGroups;
+        const barW = series2 ? Math.min(groupW / 2.6, 22) : Math.min(groupW / 1.5, 34);
+
+        labels.forEach((label, i) => {
+          const groupX = startX + i * groupW + groupW / 8;
+
+          // Series 1
+          const v1 = series1.values[i] || 0;
+          const h1 = (v1 / maxVal) * chartH;
+          ctx.fillStyle = series1.color;
+          ctx.fillRect(groupX, startY - h1, barW, h1);
+
+          // Series 2
+          if (series2) {
+            const v2 = series2.values[i] || 0;
+            const h2 = (v2 / maxVal) * chartH;
+            ctx.fillStyle = series2.color;
+            ctx.fillRect(groupX + barW + 3, startY - h2, barW, h2);
+          }
+
+          // Label
+          ctx.fillStyle = '#475569';
+          ctx.font = '10px "Segoe UI", sans-serif';
+          ctx.textAlign = 'center';
+          const shortLabel = label.length > 10 ? label.substring(0, 8) + '..' : label;
+          ctx.fillText(shortLabel, groupX + (series2 ? barW : barW / 2), startY + 16);
+        });
+
+        return canvas.toDataURL('image/png');
       };
 
-      appendSheet(dashboardData, "Executive Dashboard", [40, 25]);
-      appendSheet(dailyData, "Daily Trends", [15, 15, 15, 15, 20]);
-      appendSheet(productData, "Product Performance", [40, 15, 15, 15, 15]);
-      appendSheet(transactionData, "Raw Transactions", [25, 25, 25, 15, 15, 60]);
+      // Generate Chart PNGs
+      const sortedDaily = Array.from(dailyMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+      const dailyChartPng = createChartCanvasPng(
+        "DAILY REVENUE VS NET PROFIT TREND ($)",
+        sortedDaily.map(d => d[0]),
+        { name: "Revenue", values: sortedDaily.map(d => d[1].revenue), color: "#2563EB" },
+        { name: "Net Profit", values: sortedDaily.map(d => d[1].profit), color: "#059669" }
+      );
 
-      // --- 4. Export ---
-      const fileName = `POS_Report_${format(new Date(), "yyyy-MM-dd_HHmm")}.xlsx`;
-      XLSX.writeFile(wb, fileName);
+      const topProducts = Array.from(productStatsMap.entries()).sort((a, b) => b[1].revenue - a[1].revenue).slice(0, 7);
+      const productChartPng = createChartCanvasPng(
+        "TOP REVENUE PRODUCTS ($)",
+        topProducts.map(p => p[0]),
+        { name: "Revenue", values: topProducts.map(p => p[1].revenue), color: "#3B82F6" },
+        { name: "Profit", values: topProducts.map(p => p[1].profit), color: "#10B981" }
+      );
+
+      // --- SHEET 1: EXECUTIVE SUMMARY ---
+      const summaryWs = workbook.addWorksheet("Executive Summary", { views: [{ showGridLines: true }] });
+
+      // Title Banner
+      const titleR = summaryWs.addRow(["POS RETAIL SALES EXECUTIVE DASHBOARD"]);
+      summaryWs.mergeCells(1, 1, 1, 6);
+      titleR.height = 36;
+      const tCell = titleR.getCell(1);
+      tCell.font = { name: 'Segoe UI', size: 15, bold: true, color: { argb: 'FFFFFFFF' } };
+      tCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+      tCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+      summaryWs.addRow([`Report Generated: ${format(new Date(), "yyyy-MM-dd HH:mm:ss")}`]);
+      summaryWs.addRow([`Date Filter: ${startDate ? format(startDate, "yyyy-MM-dd") : "All Time"} to ${endDate ? format(endDate, "yyyy-MM-dd") : "All Time"}`]);
+      summaryWs.addRow([]);
+
+      // Section 1: Financial Overview
+      const sec1 = summaryWs.addRow(["FINANCIAL PERFORMANCE OVERVIEW"]);
+      summaryWs.mergeCells(5, 1, 5, 2);
+      sec1.height = 26;
+      sec1.getCell(1).font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+      sec1.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+      sec1.getCell(1).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+      const kpiH = summaryWs.addRow(["Performance Metric", "Value"]);
+      kpiH.height = 24;
+      [1, 2].forEach(col => {
+        const cell = kpiH.getCell(col);
+        cell.font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
+        cell.alignment = { vertical: 'middle', horizontal: col === 1 ? 'left' : 'right' };
+      });
+
+      const kpis: [string, number, 'currency' | 'percent' | 'number'][] = [
+        ["Total Sales Revenue", Number(totalRev.toFixed(2)), 'currency'],
+        ["Total Estimated Cost", Number(totalCst.toFixed(2)), 'currency'],
+        ["Total Net Profit", Number(totalProf.toFixed(2)), 'currency'],
+        ["Overall Gross Margin", profMargin / 100, 'percent'],
+        ["Total Completed Orders", filteredSales.length, 'number'],
+        ["Total Item Units Sold", totalUnitsSold, 'number'],
+        ["Average Order Value (AOV)", filteredSales.length > 0 ? totalRev / filteredSales.length : 0, 'currency']
+      ];
+
+      kpis.forEach(([metric, val, type], idx) => {
+        const row = summaryWs.addRow([metric, val]);
+        row.height = 22;
+        const bg = idx % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC';
+
+        const c1 = row.getCell(1);
+        c1.font = { name: 'Segoe UI', size: 10.5, bold: true, color: { argb: 'FF0F172A' } };
+        c1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        c1.alignment = { vertical: 'middle', horizontal: 'left' };
+        c1.border = { top: { style: 'thin', color: { argb: 'FFE2E8F0' } }, bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } }, left: { style: 'thin', color: { argb: 'FFE2E8F0' } }, right: { style: 'thin', color: { argb: 'FFE2E8F0' } } };
+
+        const c2 = row.getCell(2);
+        c2.font = { name: 'Segoe UI', size: 10.5, bold: true, color: { argb: 'FF0F172A' } };
+        c2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        c2.alignment = { vertical: 'middle', horizontal: 'right' };
+        c2.border = { top: { style: 'thin', color: { argb: 'FFE2E8F0' } }, bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } }, left: { style: 'thin', color: { argb: 'FFE2E8F0' } }, right: { style: 'thin', color: { argb: 'FFE2E8F0' } } };
+
+        if (type === 'currency') c2.numFmt = '$#,##0.00';
+        if (type === 'percent') c2.numFmt = '0.00%';
+        if (type === 'number') c2.numFmt = '#,##0';
+      });
+
+      // Section 2: Today's Snapshot
+      summaryWs.addRow([]);
+      const sec2 = summaryWs.addRow(["TODAY'S PERFORMANCE SNAPSHOT"]);
+      summaryWs.mergeCells(15, 1, 15, 2);
+      sec2.height = 26;
+      sec2.getCell(1).font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+      sec2.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+      sec2.getCell(1).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+      const todayKpis: [string, number, 'currency' | 'percent'][] = [
+        ["Today's Revenue", Number(todayRev.toFixed(2)), 'currency'],
+        ["Today's Net Profit", Number(todayProfit.toFixed(2)), 'currency'],
+        ["Today's Profit Margin", todayMargin / 100, 'percent']
+      ];
+
+      todayKpis.forEach(([metric, val, type], idx) => {
+        const row = summaryWs.addRow([metric, val]);
+        row.height = 22;
+        const bg = idx % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC';
+
+        const c1 = row.getCell(1);
+        c1.font = { name: 'Segoe UI', size: 10.5, bold: true, color: { argb: 'FF0F172A' } };
+        c1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        c1.border = { top: { style: 'thin', color: { argb: 'FFE2E8F0' } }, bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } }, left: { style: 'thin', color: { argb: 'FFE2E8F0' } }, right: { style: 'thin', color: { argb: 'FFE2E8F0' } } };
+
+        const c2 = row.getCell(2);
+        c2.font = { name: 'Segoe UI', size: 10.5, bold: true, color: { argb: 'FF0F172A' } };
+        c2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        c2.border = { top: { style: 'thin', color: { argb: 'FFE2E8F0' } }, bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } }, left: { style: 'thin', color: { argb: 'FFE2E8F0' } }, right: { style: 'thin', color: { argb: 'FFE2E8F0' } } };
+
+        if (type === 'currency') c2.numFmt = '$#,##0.00';
+        if (type === 'percent') c2.numFmt = '0.00%';
+      });
+
+      // Embed Visual Charts into Executive Summary
+      if (dailyChartPng) {
+        const dailyChartId = workbook.addImage({ base64: dailyChartPng, extension: 'png' });
+        summaryWs.addImage(dailyChartId, {
+          tl: { col: 3, row: 4 },
+          ext: { width: 520, height: 260 }
+        });
+      }
+
+      if (productChartPng) {
+        const productChartId = workbook.addImage({ base64: productChartPng, extension: 'png' });
+        summaryWs.addImage(productChartId, {
+          tl: { col: 3, row: 18 },
+          ext: { width: 520, height: 250 }
+        });
+      }
+
+      // Auto-fit summary columns
+      summaryWs.columns.forEach((column) => {
+        let maxLen = 12;
+        column.eachCell!({ includeEmpty: false }, (cell) => {
+          const str = cell.value ? String(cell.value) : '';
+          if (str.length > maxLen) maxLen = str.length;
+        });
+        column.width = Math.min(maxLen + 4, 45);
+      });
+
+      // --- Helper: Build Full Styled Worksheet ---
+      const buildStyledSheet = (
+        sheetTitleName: string,
+        bannerTitleText: string,
+        headerTitles: string[],
+        dataRows: any[][],
+        colTypes: ('text' | 'currency' | 'number' | 'percent')[],
+        totalRowValues?: any[]
+      ) => {
+        const ws = workbook.addWorksheet(sheetTitleName, { views: [{ showGridLines: true }] });
+
+        // Row 1: Banner Title
+        const titleRow = ws.addRow([bannerTitleText]);
+        ws.mergeCells(1, 1, 1, headerTitles.length);
+        titleRow.height = 34;
+        const tCell = titleRow.getCell(1);
+        tCell.font = { name: 'Segoe UI', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+        tCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+        tCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+        // Row 2: Empty
+        ws.addRow([]);
+
+        // Row 3: Headers
+        const hRow = ws.addRow(headerTitles);
+        hRow.height = 26;
+        hRow.eachCell((cell, colNum) => {
+          cell.font = { name: 'Segoe UI', size: 10.5, bold: true, color: { argb: 'FFFFFFFF' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+          cell.alignment = { vertical: 'middle', horizontal: colTypes[colNum - 1] === 'text' ? 'left' : 'right' };
+          cell.border = {
+            top: { style: 'medium', color: { argb: 'FF0F172A' } },
+            bottom: { style: 'medium', color: { argb: 'FF0F172A' } },
+            left: { style: 'thin', color: { argb: 'FF334155' } },
+            right: { style: 'thin', color: { argb: 'FF334155' } }
+          };
+        });
+
+        // Data Rows
+        dataRows.forEach((rowVals, rIdx) => {
+          const row = ws.addRow(rowVals);
+          row.height = 22;
+          const bg = rIdx % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC';
+
+          row.eachCell((cell, colNum) => {
+            const type = colTypes[colNum - 1] || 'text';
+            cell.font = { name: 'Segoe UI', size: 10, color: { argb: 'FF0F172A' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+            cell.border = {
+              top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+              bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+              left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+              right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+            };
+
+            if (type === 'currency') {
+              cell.numFmt = '$#,##0.00';
+              cell.alignment = { vertical: 'middle', horizontal: 'right' };
+            } else if (type === 'percent') {
+              cell.numFmt = '0.00%';
+              cell.alignment = { vertical: 'middle', horizontal: 'right' };
+            } else if (type === 'number') {
+              cell.numFmt = '#,##0';
+              cell.alignment = { vertical: 'middle', horizontal: 'right' };
+            } else {
+              cell.alignment = { vertical: 'middle', horizontal: 'left' };
+            }
+          });
+        });
+
+        // Totals Row
+        if (totalRowValues) {
+          const totRow = ws.addRow(totalRowValues);
+          totRow.height = 25;
+          totRow.eachCell((cell, colNum) => {
+            const type = colTypes[colNum - 1] || 'text';
+            cell.font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: 'FF0F172A' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+            cell.border = {
+              top: { style: 'thin', color: { argb: 'FF0F172A' } },
+              bottom: { style: 'double', color: { argb: 'FF0F172A' } },
+              left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+              right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+            };
+
+            if (type === 'currency') {
+              cell.numFmt = '$#,##0.00';
+              cell.alignment = { vertical: 'middle', horizontal: 'right' };
+            } else if (type === 'percent') {
+              cell.numFmt = '0.00%';
+              cell.alignment = { vertical: 'middle', horizontal: 'right' };
+            } else if (type === 'number') {
+              cell.numFmt = '#,##0';
+              cell.alignment = { vertical: 'middle', horizontal: 'right' };
+            } else {
+              cell.alignment = { vertical: 'middle', horizontal: 'left' };
+            }
+          });
+        }
+
+        // Auto-fit Columns
+        ws.columns.forEach((column) => {
+          let maxLen = 12;
+          column.eachCell!({ includeEmpty: false }, (cell) => {
+            const str = cell.value ? String(cell.value) : '';
+            if (str.length > maxLen) maxLen = str.length;
+          });
+          column.width = Math.min(maxLen + 4, 55);
+        });
+
+        return ws;
+      };
+
+      // --- SHEET 2: ITEMIZED SALES DETAIL ---
+      const itemizedTotals = ["TOTALS", "", "", "", totalUnitsSold, "", Number(totalRev.toFixed(2)), Number(totalCst.toFixed(2)), Number(totalProf.toFixed(2)), ""];
+      buildStyledSheet(
+        "Itemized Sales Detail",
+        "ITEMIZED PRODUCT SALES TRANSACTION DETAIL",
+        ["Receipt #", "Date & Time", "Customer Name", "Product Name", "Quantity Sold", "Unit Price ($)", "Item Revenue ($)", "Est. Unit Cost ($)", "Est. Net Profit ($)", "Payment Method"],
+        itemizedData,
+        ['text', 'text', 'text', 'text', 'number', 'currency', 'currency', 'currency', 'currency', 'text'],
+        itemizedTotals
+      );
+
+      // --- SHEET 3: PRODUCT PERFORMANCE ---
+      const productRows: any[][] = [];
+      Array.from(productStatsMap.entries())
+        .sort((a, b) => b[1].revenue - a[1].revenue)
+        .forEach(([name, stats]) => {
+          const avgPrice = stats.quantity > 0 ? stats.revenue / stats.quantity : 0;
+          const cost = stats.revenue - stats.profit;
+          const margin = stats.revenue > 0 ? stats.profit / stats.revenue : 0;
+          productRows.push([
+            name,
+            stats.quantity,
+            Number(avgPrice.toFixed(2)),
+            Number(stats.revenue.toFixed(2)),
+            Number(cost.toFixed(2)),
+            Number(stats.profit.toFixed(2)),
+            margin
+          ]);
+        });
+
+      const prodTotals = ["TOTALS", totalUnitsSold, "", Number(totalRev.toFixed(2)), Number(totalCst.toFixed(2)), Number(totalProf.toFixed(2)), profMargin / 100];
+      buildStyledSheet(
+        "Product Performance",
+        "PRODUCT SALES & PROFITABILITY SUMMARY",
+        ["Product Name", "Units Sold", "Avg Unit Price ($)", "Total Revenue ($)", "Est. Total Cost ($)", "Net Profit ($)", "Profit Margin (%)"],
+        productRows,
+        ['text', 'number', 'currency', 'currency', 'currency', 'currency', 'percent'],
+        prodTotals
+      );
+
+      // --- SHEET 4: DAILY TRENDS ---
+      const dailyRows: any[][] = [];
+      sortedDaily.forEach(([date, stats]) => {
+        const cost = stats.revenue - stats.profit;
+        const aov = stats.transactions > 0 ? stats.revenue / stats.transactions : 0;
+        const margin = stats.revenue > 0 ? stats.profit / stats.revenue : 0;
+        dailyRows.push([
+          date,
+          stats.transactions,
+          stats.itemsSold,
+          Number(stats.revenue.toFixed(2)),
+          Number(cost.toFixed(2)),
+          Number(stats.profit.toFixed(2)),
+          Number(aov.toFixed(2)),
+          margin
+        ]);
+      });
+
+      const dailyTotals = ["TOTALS", filteredSales.length, totalUnitsSold, Number(totalRev.toFixed(2)), Number(totalCst.toFixed(2)), Number(totalProf.toFixed(2)), Number((filteredSales.length > 0 ? totalRev / filteredSales.length : 0).toFixed(2)), profMargin / 100];
+      buildStyledSheet(
+        "Daily Trends",
+        "DAILY SALES, REVENUE & PROFIT TRENDS",
+        ["Date", "Orders Count", "Units Sold", "Daily Revenue ($)", "Est. Daily Cost ($)", "Daily Net Profit ($)", "Avg Order Value ($)", "Profit Margin (%)"],
+        dailyRows,
+        ['text', 'number', 'number', 'currency', 'currency', 'currency', 'currency', 'percent'],
+        dailyTotals
+      );
+
+      // --- SHEET 5: ORDER MASTER LIST ---
+      const transactionRows: any[][] = [];
+      filteredSales.forEach(sale => {
+        const itemsCount = sale.sale_items?.reduce((sum, i) => sum + (i.quantity || 1), 0) || 0;
+        transactionRows.push([
+          sale.receipt_number,
+          format(new Date(sale.created_at), "yyyy-MM-dd HH:mm"),
+          sale.customers?.name || "Walk-in Customer",
+          sale.payment_method.toUpperCase(),
+          itemsCount,
+          Number((sale.subtotal || sale.total_amount).toFixed(2)),
+          0.00,
+          0.00,
+          Number(sale.total_amount.toFixed(2))
+        ]);
+      });
+
+      const orderTotals = ["TOTALS", "", "", "", totalUnitsSold, Number(totalRev.toFixed(2)), 0.00, 0.00, Number(totalRev.toFixed(2))];
+      buildStyledSheet(
+        "Order Master List",
+        "ORDER TRANSACTIONS MASTER RECORD",
+        ["Receipt #", "Date & Time", "Customer Name", "Payment Method", "Items Count", "Subtotal ($)", "Discount ($)", "Tax ($)", "Total Amount ($)"],
+        transactionRows,
+        ['text', 'text', 'text', 'text', 'number', 'currency', 'currency', 'currency', 'currency'],
+        orderTotals
+      );
+
+      // Download file using ExcelJS Buffer
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `POS_Sales_Report_${format(new Date(), "yyyy-MM-dd_HHmm")}.xlsx`;
+      link.click();
+      window.URL.revokeObjectURL(downloadUrl);
 
       toast.dismiss();
-      toast.success("Professional Report Downloaded!");
+      toast.success("Executive Styled Excel Report Downloaded!");
     } catch (error) {
       console.error("Export error:", error);
       toast.error("Failed to export report");
