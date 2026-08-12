@@ -246,9 +246,9 @@ const Reports = () => {
         ctx.fillText(chartTitle, 16, 24);
 
         // Chart Area Bounds
-        const startX = 65;
+        const startX = 75;
         const startY = 250;
-        const chartW = 540;
+        const chartW = 530;
         const chartH = 180;
 
         const maxVal = Math.max(
@@ -271,11 +271,11 @@ const Reports = () => {
           ctx.fillStyle = '#64748B';
           ctx.font = '10px "Segoe UI", sans-serif';
           ctx.textAlign = 'right';
-          ctx.fillText(`$${valLabel}`, startX - 8, y + 3);
+          ctx.fillText(`PKR ${valLabel}`, startX - 8, y + 3);
         }
 
         // Legend Right Side of Banner
-        let legX = 400;
+        let legX = 390;
         ctx.fillStyle = series1.color;
         ctx.fillRect(legX, 12, 12, 12);
         ctx.fillStyle = '#FFFFFF';
@@ -284,7 +284,7 @@ const Reports = () => {
         ctx.fillText(series1.name, legX + 16, 22);
 
         if (series2) {
-          legX += 100;
+          legX += 110;
           ctx.fillStyle = series2.color;
           ctx.fillRect(legX, 12, 12, 12);
           ctx.fillStyle = '#FFFFFF';
@@ -327,7 +327,7 @@ const Reports = () => {
       // Generate Chart PNGs
       const sortedDaily = Array.from(dailyMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
       const dailyChartPng = createChartCanvasPng(
-        "DAILY REVENUE VS NET PROFIT TREND ($)",
+        "DAILY REVENUE VS NET PROFIT TREND (PKR)",
         sortedDaily.map(d => d[0]),
         { name: "Revenue", values: sortedDaily.map(d => d[1].revenue), color: "#2563EB" },
         { name: "Net Profit", values: sortedDaily.map(d => d[1].profit), color: "#059669" }
@@ -335,7 +335,7 @@ const Reports = () => {
 
       const topProducts = Array.from(productStatsMap.entries()).sort((a, b) => b[1].revenue - a[1].revenue).slice(0, 7);
       const productChartPng = createChartCanvasPng(
-        "TOP REVENUE PRODUCTS ($)",
+        "TOP REVENUE PRODUCTS (PKR)",
         topProducts.map(p => p[0]),
         { name: "Revenue", values: topProducts.map(p => p[1].revenue), color: "#3B82F6" },
         { name: "Profit", values: topProducts.map(p => p[1].profit), color: "#10B981" }
@@ -375,13 +375,13 @@ const Reports = () => {
       });
 
       const kpis: [string, number, 'currency' | 'percent' | 'number'][] = [
-        ["Total Sales Revenue", Number(totalRev.toFixed(2)), 'currency'],
-        ["Total Estimated Cost", Number(totalCst.toFixed(2)), 'currency'],
-        ["Total Net Profit", Number(totalProf.toFixed(2)), 'currency'],
+        ["Total Sales Revenue (PKR)", Number(totalRev.toFixed(2)), 'currency'],
+        ["Total Estimated Cost (PKR)", Number(totalCst.toFixed(2)), 'currency'],
+        ["Total Net Profit (PKR)", Number(totalProf.toFixed(2)), 'currency'],
         ["Overall Gross Margin", profMargin / 100, 'percent'],
         ["Total Completed Orders", filteredSales.length, 'number'],
         ["Total Item Units Sold", totalUnitsSold, 'number'],
-        ["Average Order Value (AOV)", filteredSales.length > 0 ? totalRev / filteredSales.length : 0, 'currency']
+        ["Average Order Value (PKR)", filteredSales.length > 0 ? totalRev / filteredSales.length : 0, 'currency']
       ];
 
       kpis.forEach(([metric, val, type], idx) => {
@@ -401,7 +401,7 @@ const Reports = () => {
         c2.alignment = { vertical: 'middle', horizontal: 'right' };
         c2.border = { top: { style: 'thin', color: { argb: 'FFE2E8F0' } }, bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } }, left: { style: 'thin', color: { argb: 'FFE2E8F0' } }, right: { style: 'thin', color: { argb: 'FFE2E8F0' } } };
 
-        if (type === 'currency') c2.numFmt = '$#,##0.00';
+        if (type === 'currency') c2.numFmt = '"PKR "#,##0.00';
         if (type === 'percent') c2.numFmt = '0.00%';
         if (type === 'number') c2.numFmt = '#,##0';
       });
@@ -416,8 +416,8 @@ const Reports = () => {
       sec2.getCell(1).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
 
       const todayKpis: [string, number, 'currency' | 'percent'][] = [
-        ["Today's Revenue", Number(todayRev.toFixed(2)), 'currency'],
-        ["Today's Net Profit", Number(todayProfit.toFixed(2)), 'currency'],
+        ["Today's Revenue (PKR)", Number(todayRev.toFixed(2)), 'currency'],
+        ["Today's Net Profit (PKR)", Number(todayProfit.toFixed(2)), 'currency'],
         ["Today's Profit Margin", todayMargin / 100, 'percent']
       ];
 
@@ -436,7 +436,7 @@ const Reports = () => {
         c2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
         c2.border = { top: { style: 'thin', color: { argb: 'FFE2E8F0' } }, bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } }, left: { style: 'thin', color: { argb: 'FFE2E8F0' } }, right: { style: 'thin', color: { argb: 'FFE2E8F0' } } };
 
-        if (type === 'currency') c2.numFmt = '$#,##0.00';
+        if (type === 'currency') c2.numFmt = '"PKR "#,##0.00';
         if (type === 'percent') c2.numFmt = '0.00%';
       });
 
@@ -523,7 +523,7 @@ const Reports = () => {
             };
 
             if (type === 'currency') {
-              cell.numFmt = '$#,##0.00';
+              cell.numFmt = '"PKR "#,##0.00';
               cell.alignment = { vertical: 'middle', horizontal: 'right' };
             } else if (type === 'percent') {
               cell.numFmt = '0.00%';
@@ -553,7 +553,7 @@ const Reports = () => {
             };
 
             if (type === 'currency') {
-              cell.numFmt = '$#,##0.00';
+              cell.numFmt = '"PKR "#,##0.00';
               cell.alignment = { vertical: 'middle', horizontal: 'right' };
             } else if (type === 'percent') {
               cell.numFmt = '0.00%';
@@ -585,7 +585,7 @@ const Reports = () => {
       buildStyledSheet(
         "Itemized Sales Detail",
         "ITEMIZED PRODUCT SALES TRANSACTION DETAIL",
-        ["Receipt #", "Date & Time", "Customer Name", "Product Name", "Quantity Sold", "Unit Price ($)", "Item Revenue ($)", "Est. Unit Cost ($)", "Est. Net Profit ($)", "Payment Method"],
+        ["Receipt #", "Date & Time", "Customer Name", "Product Name", "Quantity Sold", "Unit Price (PKR)", "Item Revenue (PKR)", "Est. Unit Cost (PKR)", "Est. Net Profit (PKR)", "Payment Method"],
         itemizedData,
         ['text', 'text', 'text', 'text', 'number', 'currency', 'currency', 'currency', 'currency', 'text'],
         itemizedTotals
@@ -614,7 +614,7 @@ const Reports = () => {
       buildStyledSheet(
         "Product Performance",
         "PRODUCT SALES & PROFITABILITY SUMMARY",
-        ["Product Name", "Units Sold", "Avg Unit Price ($)", "Total Revenue ($)", "Est. Total Cost ($)", "Net Profit ($)", "Profit Margin (%)"],
+        ["Product Name", "Units Sold", "Avg Unit Price (PKR)", "Total Revenue (PKR)", "Est. Total Cost (PKR)", "Net Profit (PKR)", "Profit Margin (%)"],
         productRows,
         ['text', 'number', 'currency', 'currency', 'currency', 'currency', 'percent'],
         prodTotals
@@ -642,7 +642,7 @@ const Reports = () => {
       buildStyledSheet(
         "Daily Trends",
         "DAILY SALES, REVENUE & PROFIT TRENDS",
-        ["Date", "Orders Count", "Units Sold", "Daily Revenue ($)", "Est. Daily Cost ($)", "Daily Net Profit ($)", "Avg Order Value ($)", "Profit Margin (%)"],
+        ["Date", "Orders Count", "Units Sold", "Daily Revenue (PKR)", "Est. Daily Cost (PKR)", "Daily Net Profit (PKR)", "Avg Order Value (PKR)", "Profit Margin (%)"],
         dailyRows,
         ['text', 'number', 'number', 'currency', 'currency', 'currency', 'currency', 'percent'],
         dailyTotals
@@ -669,7 +669,7 @@ const Reports = () => {
       buildStyledSheet(
         "Order Master List",
         "ORDER TRANSACTIONS MASTER RECORD",
-        ["Receipt #", "Date & Time", "Customer Name", "Payment Method", "Items Count", "Subtotal ($)", "Discount ($)", "Tax ($)", "Total Amount ($)"],
+        ["Receipt #", "Date & Time", "Customer Name", "Payment Method", "Items Count", "Subtotal (PKR)", "Discount (PKR)", "Tax (PKR)", "Total Amount (PKR)"],
         transactionRows,
         ['text', 'text', 'text', 'text', 'number', 'currency', 'currency', 'currency', 'currency'],
         orderTotals
@@ -686,7 +686,7 @@ const Reports = () => {
       window.URL.revokeObjectURL(downloadUrl);
 
       toast.dismiss();
-      toast.success("Executive Styled Excel Report Downloaded!");
+      toast.success("Executive Styled Excel Report Downloaded (PKR)!");
     } catch (error) {
       console.error("Export error:", error);
       toast.error("Failed to export report");
