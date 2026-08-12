@@ -47,17 +47,21 @@ const AppContent = () => {
   }, []);
 
   const checkSuspension = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const { data } = await supabase
-        .from('profiles' as any)
-        .select('status')
-        .eq('id', user.id)
-        .single();
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data } = await supabase
+          .from('profiles' as any)
+          .select('status')
+          .eq('id', user.id)
+          .maybeSingle();
 
-      if ((data as any)?.status === 'suspended' || (data as any)?.status === 'banned') {
-        setIsSuspended(true);
+        if ((data as any)?.status === 'suspended' || (data as any)?.status === 'banned') {
+          setIsSuspended(true);
+        }
       }
+    } catch (err) {
+      console.warn("Suspension check failed:", err);
     }
   };
 
@@ -81,28 +85,31 @@ const AppContent = () => {
 
     useEffect(() => {
       const checkDevStatus = async () => {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) {
+            setIsDev(false);
+            return;
+          }
+
+          // Check user_roles table for role safely
+          const { data } = await supabase
+            .from('user_roles' as any)
+            .select('role')
+            .eq('user_id', user.id)
+            .maybeSingle();
+
+          const userRole = (data as any)?.role;
+
+          const isAuthorized =
+            userRole === 'admin' ||
+            userRole === 'developer';
+
+          setIsDev(!!isAuthorized);
+        } catch (err) {
+          console.warn("Developer check error:", err);
           setIsDev(false);
-          return;
         }
-
-        // Check user_roles table for role
-        const { data } = await supabase
-          .from('user_roles' as any)
-          .select('role')
-          .eq('user_id', user.id)
-          .single();
-
-        const userRole = (data as any)?.role;
-
-        // Allow if role is 'admin' (or 'developer' if added to enum)
-        // Fallback to email check for legacy support
-        const isAuthorized =
-          userRole === 'admin' ||
-          userRole === 'developer';
-
-        setIsDev(!!isAuthorized);
       };
 
       checkDevStatus();

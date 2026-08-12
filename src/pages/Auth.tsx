@@ -64,9 +64,18 @@ const Auth = () => {
 
   useEffect(() => {
     const checkUser = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        navigate("/");
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) {
+          console.warn("Stale or invalid auth session:", error);
+          await supabase.auth.signOut().catch(() => {});
+          return;
+        }
+        if (session?.user) {
+          navigate("/");
+        }
+      } catch (err) {
+        console.warn("Failed to check auth session:", err);
       }
     };
     checkUser();
@@ -74,9 +83,10 @@ const Auth = () => {
 
   const onSignIn = async (data: SignInFormValues) => {
     setLoading(true);
+    const cleanEmail = data.email.trim();
     try {
       const { data: signInData, error } = await supabase.auth.signInWithPassword({
-        email: data.email,
+        email: cleanEmail,
         password: data.password,
       });
 
@@ -85,30 +95,48 @@ const Auth = () => {
 
       const user = signInData.user;
 
-      // Fetch role
-      const { data: roleData, error: roleError } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', user.id)
-        .maybeSingle();
+      // Safely fetch role
+      let userRole = 'user';
+      try {
+        const { data: roleData } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', user.id)
+          .maybeSingle();
 
-      if (roleError) console.error("Error fetching role:", roleError);
+        if (roleData?.role) {
+          userRole = roleData.role;
+        }
+      } catch (rErr) {
+        console.warn("Could not fetch user role, defaulting to user:", rErr);
+      }
 
       // Save local profile
       const localProfile: UserProfile = {
         id: user.id,
         email: user.email,
-        role: roleData?.role || 'user',
+        role: userRole,
       };
 
       await db.userProfile.put(localProfile);
 
-      // Trigger sync immediately to restore data if local DB was cleared
+      // Upsert profile in Supabase table if online
+      if (navigator.onLine) {
+        supabase
+          .from('profiles')
+          .upsert({ id: user.id, email: user.email, updated_at: new Date().toISOString() }, { onConflict: 'id' })
+          .then(({ error: pErr }) => {
+            if (pErr) console.warn("Profile sync warning:", pErr);
+          });
+      }
+
+      // Trigger sync immediately
       syncService.syncAll();
 
       toast.success("Welcome back!");
       navigate("/");
     } catch (error: any) {
+      console.error("Login failed:", error);
       toast.error(error.message || "Invalid credentials");
     } finally {
       setLoading(false);
@@ -117,9 +145,10 @@ const Auth = () => {
 
   const onSignUp = async (data: SignUpFormValues) => {
     setLoading(true);
+    const cleanEmail = data.email.trim();
     try {
       const { data: signUpData, error } = await supabase.auth.signUp({
-        email: data.email,
+        email: cleanEmail,
         password: data.password,
       });
 
@@ -139,7 +168,7 @@ const Auth = () => {
       } else {
         // Attempt instant login if confirmation is disabled on server
         const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-          email: data.email,
+          email: cleanEmail,
           password: data.password,
         });
 
