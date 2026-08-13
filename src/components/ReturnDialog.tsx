@@ -162,6 +162,19 @@ export const ReturnDialog = ({ open, onOpenChange }: ReturnDialogProps) => {
 
       if (returnError) throw returnError;
 
+      // 1b. Create Audit Refund Record
+      await supabase.from("refunds").insert({
+        sale_id: sale.id,
+        refund_number: returnReceiptNumber,
+        amount: refundTotal,
+        refund_type: 'product',
+        payment_method: sale.payment_method || 'cash',
+        reason: `POS Return for receipt ${sale.receipt_number}`,
+        restock_item: true,
+        processed_by: user.id,
+        user_id: user.id
+      });
+
       // 2. Create Return Items and Restore Stock
       for (const item of itemsToReturn) {
         const state = returnItems[item.id];

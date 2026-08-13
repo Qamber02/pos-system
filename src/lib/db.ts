@@ -270,6 +270,24 @@ export interface CachedRepairTicketPartHistory {
   created_at?: string;
 }
 
+export interface CachedRefund {
+  id: string;
+  user_id: string;
+  sale_id?: string | null;
+  repair_ticket_id?: string | null;
+  refund_number: string;
+  amount: number;
+  refund_type: 'product' | 'service' | 'deposit';
+  payment_method: 'cash' | 'card' | 'store_credit' | 'other';
+  reason: string;
+  restock_item: boolean;
+  processed_by?: string | null;
+  notes?: string | null;
+  synced: boolean;
+  lastModified: number;
+  created_at?: string;
+}
+
 // --- DATABASE CLASS ---
 
 export class OfflineDatabase extends Dexie {
@@ -291,6 +309,7 @@ export class OfflineDatabase extends Dexie {
   technicians!: Table<CachedTechnician>;
   repairTicketParts!: Table<CachedRepairTicketPart>;
   repairTicketPartHistory!: Table<CachedRepairTicketPartHistory>;
+  refunds!: Table<CachedRefund>;
 
   constructor() {
     super('ShopAppOfflineDB');
@@ -315,7 +334,8 @@ export class OfflineDatabase extends Dexie {
       repairTicketHistory: 'id, repair_ticket_id, user_id, lastModified, synced',
       technicians: 'id, user_id, name, status, lastModified, synced',
       repairTicketParts: 'id, user_id, repair_ticket_id, product_id, status, lastModified, synced',
-      repairTicketPartHistory: 'id, repair_ticket_part_id, repair_ticket_id, user_id, lastModified, synced'
+      repairTicketPartHistory: 'id, repair_ticket_part_id, repair_ticket_id, user_id, lastModified, synced',
+      refunds: 'id, user_id, sale_id, repair_ticket_id, refund_number, lastModified, synced'
     });
   }
 

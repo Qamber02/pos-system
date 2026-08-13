@@ -556,6 +556,7 @@ class SyncService {
       'technicians': 'technicians',
       'repairTicketParts': 'repair_ticket_parts',
       'repairTicketPartHistory': 'repair_ticket_part_history',
+      'refunds': 'refunds',
     };
     return mapping[dexieTableName] || dexieTableName;
   }

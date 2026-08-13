@@ -15,6 +15,8 @@ import { db, CachedCustomer, CachedRepairTicket, CachedRepairTicketHistory, Cach
 import { useLiveQuery } from "dexie-react-hooks";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { TicketPartsManager } from "@/components/repair/TicketPartsManager";
+import { RepairRefundDialog } from "@/components/repair/RepairRefundDialog";
+import { RotateCcw } from "lucide-react";
 
 interface RepairTicketDetailModalProps {
   open: boolean;
@@ -63,6 +65,7 @@ export const RepairTicketDetailModal = ({
   const formatCurrency = useFormatCurrency();
   const [updating, setUpdating] = useState(false);
   const [statusNote, setStatusNote] = useState("");
+  const [refundDialogOpen, setRefundDialogOpen] = useState(false);
 
   const partHistory = useLiveQuery(async () => {
     if (!ticket?.id) return [];
@@ -80,12 +83,21 @@ export const RepairTicketDetailModal = ({
       .toArray();
   }, [ticket?.id]) || [];
 
+  const refunds = useLiveQuery(async () => {
+    if (!ticket?.id) return [];
+    return await db.refunds
+      .where('repair_ticket_id')
+      .equals(ticket.id)
+      .toArray();
+  }, [ticket?.id]) || [];
+
   if (!ticket) return null;
 
   const activeItemsTotal = attachedItems
     .filter(item => !['returned', 'broken', 'returned_to_supplier'].includes(item.status))
     .reduce((sum, item) => sum + (item.unit_price * item.quantity), 0);
 
+  const totalRefundedSum = refunds.reduce((sum, r) => sum + r.amount, 0);
   const grandTotalInvoice = (ticket.estimated_cost || 0) + activeItemsTotal;
   const balanceRemaining = Math.max(0, grandTotalInvoice - (ticket.deposit_paid || 0));
 
@@ -266,7 +278,21 @@ export const RepairTicketDetailModal = ({
                     <div className="border-t pt-1 mt-1">
                       <p className="text-xs font-semibold">Total Invoice: <span className="text-primary font-bold">{formatCurrency(grandTotalInvoice)}</span></p>
                       <p className="text-xs text-muted-foreground">Deposit Paid: <span className="font-medium text-emerald-600">-{formatCurrency(ticket.deposit_paid || 0)}</span></p>
+                      {totalRefundedSum > 0 && (
+                        <p className="text-xs text-muted-foreground">Refunded: <span className="font-medium text-destructive">-{formatCurrency(totalRefundedSum)}</span></p>
+                      )}
                       <p className="text-xs font-bold text-foreground mt-0.5">Balance Due: <span className={balanceRemaining > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600"}>{formatCurrency(balanceRemaining)}</span></p>
+                    </div>
+
+                    <div className="pt-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs text-destructive hover:bg-destructive/10 border-destructive/30 w-full"
+                        onClick={() => setRefundDialogOpen(true)}
+                      >
+                        <RotateCcw className="h-3 w-3 mr-1" /> Process Refund
+                      </Button>
                     </div>
                   </div>
                 </div>
@@ -345,6 +371,13 @@ export const RepairTicketDetailModal = ({
           </div>
         </div>
       </DialogContent>
+
+      <RepairRefundDialog
+        open={refundDialogOpen}
+        onOpenChange={setRefundDialogOpen}
+        ticket={ticket}
+        maxRefundableAmount={grandTotalInvoice}
+      />
     </Dialog>
   );
 };
