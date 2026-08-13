@@ -232,7 +232,7 @@ const RepairTickets = () => {
                           <TableHead className="text-xs font-bold py-3">Customer</TableHead>
                           <TableHead className="text-xs font-bold py-3">Reported Issue</TableHead>
                           <TableHead className="text-xs font-bold py-3">Stage Status</TableHead>
-                          <TableHead className="text-xs font-bold py-3 text-right">Estimate & Deposit</TableHead>
+                          <TableHead className="text-xs font-bold py-3 text-right">Repair Cost & Deposit</TableHead>
                           <TableHead className="text-xs font-bold py-3 text-right">Actions</TableHead>
                         </TableRow>
                       </TableHeader>

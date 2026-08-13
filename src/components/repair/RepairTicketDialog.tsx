@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Wrench, Truck, Plus, Package, Edit3, List } from "lucide-react";
+import { Wrench, Truck, Package, Edit3, List, Calculator } from "lucide-react";
 import { toast } from "sonner";
 import { syncService } from "@/lib/syncService";
 import { db, CachedCustomer, CachedDeviceIdentifier, CachedRepairTicket, RepairStatus, CachedRepairTicketPart, CachedWholesalerIntake, CachedProduct } from "@/lib/db";
@@ -36,7 +36,7 @@ export const RepairTicketDialog = ({
   const [deviceName, setDeviceName] = useState("");
   const [serialOrImei, setSerialOrImei] = useState("");
   const [issueDescription, setIssueDescription] = useState("");
-  const [estimatedCost, setEstimatedCost] = useState("");
+  const [repairCost, setRepairCost] = useState("");
   const [depositPaid, setDepositPaid] = useState("");
   const [status, setStatus] = useState<RepairStatus>("received");
   const [notes, setNotes] = useState("");
@@ -60,7 +60,7 @@ export const RepairTicketDialog = ({
       setDeviceName(ticketToEdit.device_name);
       setSerialOrImei(ticketToEdit.serial_or_imei || "");
       setIssueDescription(ticketToEdit.issue_description);
-      setEstimatedCost(ticketToEdit.estimated_cost?.toString() || "");
+      setRepairCost(ticketToEdit.estimated_cost?.toString() || "");
       setDepositPaid(ticketToEdit.deposit_paid?.toString() || "");
       setStatus(ticketToEdit.status);
       setNotes(ticketToEdit.notes || "");
@@ -85,10 +85,6 @@ export const RepairTicketDialog = ({
     if (prod) {
       setAttachPartUnitCost(String(prod.cost_price || 0));
       setAttachPartUnitPrice(String(prod.retail_price || 0));
-      // Auto adjust estimated cost if 0
-      if (!estimatedCost || parseFloat(estimatedCost) === 0) {
-        setEstimatedCost(String(prod.retail_price || 0));
-      }
     }
   };
 
@@ -124,7 +120,7 @@ export const RepairTicketDialog = ({
           device_name: deviceName.trim(),
           serial_or_imei: serialOrImei.trim() || null,
           issue_description: issueDescription.trim(),
-          estimated_cost: parseFloat(estimatedCost) || 0,
+          estimated_cost: parseFloat(repairCost) || 0,
           deposit_paid: parseFloat(depositPaid) || 0,
           status,
           notes: notes.trim() || null,
@@ -167,7 +163,7 @@ export const RepairTicketDialog = ({
           device_name: deviceName.trim(),
           serial_or_imei: serialOrImei.trim() || null,
           issue_description: issueDescription.trim(),
-          estimated_cost: parseFloat(estimatedCost) || 0,
+          estimated_cost: parseFloat(repairCost) || 0,
           deposit_paid: parseFloat(depositPaid) || 0,
           status,
           notes: notes.trim() || null,
@@ -295,7 +291,7 @@ export const RepairTicketDialog = ({
     setDeviceName("");
     setSerialOrImei("");
     setIssueDescription("");
-    setEstimatedCost("");
+    setRepairCost("");
     setDepositPaid("");
     setStatus("received");
     setNotes("");
@@ -309,6 +305,11 @@ export const RepairTicketDialog = ({
     setAttachPartUnitPrice("0");
   };
 
+  // Financial Calculations Preview
+  const numRepairCost = parseFloat(repairCost) || 0;
+  const numPartPrice = (attachPartProductId || customPartName.trim()) ? ((parseFloat(attachPartUnitPrice) || 0) * (parseInt(attachPartQty) || 1)) : 0;
+  const totalCalculatedInvoice = numRepairCost + numPartPrice;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl max-h-[92vh] overflow-y-auto">
@@ -318,7 +319,7 @@ export const RepairTicketDialog = ({
             {ticketToEdit ? `Edit Ticket ${ticketToEdit.ticket_number}` : "Log New Repair Ticket"}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Record device details, customer information, reported issues, and attach parts.
+            Record device details, customer information, repair cost, and attach parts.
           </DialogDescription>
         </DialogHeader>
 
@@ -469,40 +470,29 @@ export const RepairTicketDialog = ({
                     <Input type="number" min="1" className="h-7 text-xs" value={attachPartQty} onChange={(e) => setAttachPartQty(e.target.value)} />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-[10px]">Agreed Unit Cost (Wholesaler)</Label>
-                    <Input type="number" step="0.01" className="h-7 text-xs font-semibold" value={attachPartUnitCost} onChange={(e) => setAttachPartUnitCost(e.target.value)} />
+                    <Label className="text-[10px]">Part Cost (Wholesaler)</Label>
+                    <Input type="number" step="0.01" className="h-7 text-xs font-semibold text-amber-600" value={attachPartUnitCost} onChange={(e) => setAttachPartUnitCost(e.target.value)} />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-[10px]">Part Retail Price</Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      className="h-7 text-xs font-semibold"
-                      value={attachPartUnitPrice}
-                      onChange={(e) => {
-                        setAttachPartUnitPrice(e.target.value);
-                        if (!estimatedCost || parseFloat(estimatedCost) === 0) {
-                          setEstimatedCost(e.target.value);
-                        }
-                      }}
-                    />
+                    <Label className="text-[10px]">Part Price (Customer)</Label>
+                    <Input type="number" step="0.01" className="h-7 text-xs font-semibold text-primary" value={attachPartUnitPrice} onChange={(e) => setAttachPartUnitPrice(e.target.value)} />
                   </div>
                 </div>
               )}
             </div>
           )}
 
-          {/* Financials & Status */}
+          {/* Financial Summary & Live Total Breakdown */}
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-1">
-              <Label className="text-xs font-medium">Estimated Cost</Label>
+              <Label className="text-xs font-semibold text-foreground">Repair Cost (Labor Fee) *</Label>
               <Input
                 type="number"
                 step="0.01"
                 placeholder="0.00"
-                className="h-8 text-xs font-semibold"
-                value={estimatedCost}
-                onChange={(e) => setEstimatedCost(e.target.value)}
+                className="h-8 text-xs font-bold"
+                value={repairCost}
+                onChange={(e) => setRepairCost(e.target.value)}
               />
             </div>
 
@@ -537,6 +527,20 @@ export const RepairTicketDialog = ({
                   <SelectItem value="cancelled">Cancelled</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+          </div>
+
+          {/* Live Total Invoice Calculation Preview */}
+          <div className="p-2.5 bg-primary/5 rounded border border-primary/20 flex items-center justify-between text-xs">
+            <div className="flex items-center gap-1.5 font-medium">
+              <Calculator className="h-4 w-4 text-primary" />
+              <span>Total Invoice Preview:</span>
+              <span className="text-muted-foreground">
+                (Repair: {formatCurrency(numRepairCost)} + Part: {formatCurrency(numPartPrice)})
+              </span>
+            </div>
+            <div className="font-extrabold text-sm text-primary">
+              {formatCurrency(totalCalculatedInvoice)}
             </div>
           </div>
 

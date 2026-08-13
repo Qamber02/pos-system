@@ -273,7 +273,7 @@ export const RepairTicketDetailModal = ({
                     </div>
                   </div>
                   <div className="text-right space-y-1">
-                    <p className="text-xs text-muted-foreground">Labor / Base: <span className="font-medium text-foreground">{formatCurrency(ticket.estimated_cost || 0)}</span></p>
+                    <p className="text-xs text-muted-foreground">Repair Cost (Service): <span className="font-medium text-foreground">{formatCurrency(ticket.estimated_cost || 0)}</span></p>
                     <p className="text-xs text-muted-foreground">Parts & Items: <span className="font-medium text-foreground">{formatCurrency(activeItemsTotal)}</span></p>
                     <div className="border-t pt-1 mt-1">
                       <p className="text-xs font-semibold">Total Invoice: <span className="text-primary font-bold">{formatCurrency(grandTotalInvoice)}</span></p>
