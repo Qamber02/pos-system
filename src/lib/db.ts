@@ -288,6 +288,54 @@ export interface CachedRefund {
   created_at?: string;
 }
 
+export interface CachedWholesaler {
+  id: string;
+  user_id: string;
+  name: string;
+  contact_person?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  notes?: string | null;
+  synced: boolean;
+  lastModified: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CachedWholesalerIntake {
+  id: string;
+  user_id: string;
+  wholesaler_id: string;
+  product_id?: string | null;
+  item_name: string;
+  quantity: number;
+  agreed_unit_cost: number;
+  total_cost: number;
+  amount_paid: number;
+  intake_date?: string;
+  status: 'pending' | 'partial' | 'paid';
+  notes?: string | null;
+  synced: boolean;
+  lastModified: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CachedWholesalerPayment {
+  id: string;
+  user_id: string;
+  wholesaler_id: string;
+  intake_id?: string | null;
+  amount: number;
+  payment_method: string;
+  payment_date?: string;
+  notes?: string | null;
+  synced: boolean;
+  lastModified: number;
+  created_at?: string;
+}
+
 // --- DATABASE CLASS ---
 
 export class OfflineDatabase extends Dexie {
@@ -310,6 +358,9 @@ export class OfflineDatabase extends Dexie {
   repairTicketParts!: Table<CachedRepairTicketPart>;
   repairTicketPartHistory!: Table<CachedRepairTicketPartHistory>;
   refunds!: Table<CachedRefund>;
+  wholesalers!: Table<CachedWholesaler>;
+  wholesalerIntakes!: Table<CachedWholesalerIntake>;
+  wholesalerPayments!: Table<CachedWholesalerPayment>;
 
   constructor() {
     super('ShopAppOfflineDB');
@@ -335,7 +386,10 @@ export class OfflineDatabase extends Dexie {
       technicians: 'id, user_id, name, status, lastModified, synced',
       repairTicketParts: 'id, user_id, repair_ticket_id, product_id, status, lastModified, synced',
       repairTicketPartHistory: 'id, repair_ticket_part_id, repair_ticket_id, user_id, lastModified, synced',
-      refunds: 'id, user_id, sale_id, repair_ticket_id, refund_number, lastModified, synced'
+      refunds: 'id, user_id, sale_id, repair_ticket_id, refund_number, lastModified, synced',
+      wholesalers: 'id, user_id, name, lastModified, synced',
+      wholesalerIntakes: 'id, user_id, wholesaler_id, product_id, status, lastModified, synced',
+      wholesalerPayments: 'id, user_id, wholesaler_id, intake_id, lastModified, synced'
     });
   }
 

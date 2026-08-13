@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { Menu, Home, Package, Users, BarChart3, Settings, LogOut, Shield, HandCoins, ShoppingCart, CreditCard, RefreshCw, Wrench } from "lucide-react";
+import { Menu, Home, Package, Users, BarChart3, Settings, LogOut, Shield, HandCoins, ShoppingCart, CreditCard, RefreshCw, Wrench, Truck } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -68,6 +68,7 @@ export const Navigation = () => {
     { path: "/pos", icon: ShoppingCart, label: "POS" },
     { path: "/products", icon: Package, label: "Products" },
     { path: "/repairs", icon: Wrench, label: "Repairs" },
+    { path: "/wholesalers", icon: Truck, label: "Wholesalers" },
     { path: "/customers", icon: Users, label: "Customers" },
     { path: "/loans", icon: CreditCard, label: "Loans" },
     { path: "/reports", icon: BarChart3, label: "Reports" }, // Visible to all now

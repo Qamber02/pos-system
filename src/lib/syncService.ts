@@ -557,6 +557,9 @@ class SyncService {
       'repairTicketParts': 'repair_ticket_parts',
       'repairTicketPartHistory': 'repair_ticket_part_history',
       'refunds': 'refunds',
+      'wholesalers': 'wholesalers',
+      'wholesalerIntakes': 'wholesaler_intakes',
+      'wholesalerPayments': 'wholesaler_payments',
     };
     return mapping[dexieTableName] || dexieTableName;
   }
