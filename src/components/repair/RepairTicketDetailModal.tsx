@@ -97,8 +97,13 @@ export const RepairTicketDetailModal = ({
     .filter(item => !['returned', 'broken', 'returned_to_supplier'].includes(item.status))
     .reduce((sum, item) => sum + (item.unit_price * item.quantity), 0);
 
+  const totalPartCost = attachedItems
+    .filter(item => !['returned', 'broken', 'returned_to_supplier'].includes(item.status))
+    .reduce((sum, item) => sum + ((item.unit_cost || 0) * item.quantity), 0);
+
   const totalRefundedSum = refunds.reduce((sum, r) => sum + r.amount, 0);
-  const grandTotalInvoice = (ticket.estimated_cost || 0) + activeItemsTotal;
+  const grandTotalInvoice = Math.max(ticket.estimated_cost || 0, activeItemsTotal > 0 ? (ticket.estimated_cost || 0) : (ticket.estimated_cost || 0));
+  const netProfit = grandTotalInvoice - totalPartCost;
   const balanceRemaining = Math.max(0, grandTotalInvoice - (ticket.deposit_paid || 0));
 
   const combinedAuditLogs = [
@@ -273,10 +278,10 @@ export const RepairTicketDetailModal = ({
                     </div>
                   </div>
                   <div className="text-right space-y-1">
-                    <p className="text-xs text-muted-foreground">Repair Cost (Service): <span className="font-medium text-foreground">{formatCurrency(ticket.estimated_cost || 0)}</span></p>
-                    <p className="text-xs text-muted-foreground">Parts & Items: <span className="font-medium text-foreground">{formatCurrency(activeItemsTotal)}</span></p>
+                    <p className="text-xs font-bold text-primary">Total Customer Charge: <span>{formatCurrency(grandTotalInvoice)}</span></p>
+                    <p className="text-xs text-amber-700 dark:text-amber-300">Wholesaler Part Cost: <span>-{formatCurrency(totalPartCost)}</span></p>
+                    <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">Net Shop Repair Profit: <span>{formatCurrency(netProfit)}</span></p>
                     <div className="border-t pt-1 mt-1">
-                      <p className="text-xs font-semibold">Total Invoice: <span className="text-primary font-bold">{formatCurrency(grandTotalInvoice)}</span></p>
                       <p className="text-xs text-muted-foreground">Deposit Paid: <span className="font-medium text-emerald-600">-{formatCurrency(ticket.deposit_paid || 0)}</span></p>
                       {totalRefundedSum > 0 && (
                         <p className="text-xs text-muted-foreground">Refunded: <span className="font-medium text-destructive">-{formatCurrency(totalRefundedSum)}</span></p>
