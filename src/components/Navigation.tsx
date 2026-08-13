@@ -135,7 +135,7 @@ export const Navigation = () => {
   return (
     <Sheet>
       <SheetTrigger asChild>
-        <Button variant="outline" size="icon" className="fixed top-4 left-4 z-50 h-10 w-10 rounded-full shadow-md bg-white/80 backdrop-blur-sm border-zinc-200 hover:scale-105 transition-all duration-300 dark:bg-zinc-900/80 dark:border-zinc-800">
+        <Button variant="outline" size="icon" className="fixed top-3.5 left-4 z-[100] h-10 w-10 rounded-full shadow-md bg-white/90 backdrop-blur-md border-zinc-200 hover:scale-105 transition-all duration-300 dark:bg-zinc-900/90 dark:border-zinc-800">
           <Menu className="h-5 w-5 text-zinc-700 dark:text-zinc-200" />
         </Button>
       </SheetTrigger>
