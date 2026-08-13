@@ -249,6 +249,7 @@ export interface CachedRepairTicketPart {
   status: TicketPartStatus;
   status_reason?: string | null;
   status_updated_at?: string | null;
+  item_type?: 'part' | 'product';
   synced: boolean;
   lastModified: number;
   created_at?: string;

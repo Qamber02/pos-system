@@ -72,7 +72,22 @@ export const RepairTicketDetailModal = ({
       .toArray();
   }, [ticket?.id]) || [];
 
+  const attachedItems = useLiveQuery(async () => {
+    if (!ticket?.id) return [];
+    return await db.repairTicketParts
+      .where('repair_ticket_id')
+      .equals(ticket.id)
+      .toArray();
+  }, [ticket?.id]) || [];
+
   if (!ticket) return null;
+
+  const activeItemsTotal = attachedItems
+    .filter(item => !['returned', 'broken', 'returned_to_supplier'].includes(item.status))
+    .reduce((sum, item) => sum + (item.unit_price * item.quantity), 0);
+
+  const grandTotalInvoice = (ticket.estimated_cost || 0) + activeItemsTotal;
+  const balanceRemaining = Math.max(0, grandTotalInvoice - (ticket.deposit_paid || 0));
 
   const combinedAuditLogs = [
     ...history
@@ -245,9 +260,14 @@ export const RepairTicketDetailModal = ({
                       </Select>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-xs text-muted-foreground">Estimate: <span className="font-semibold text-foreground">{formatCurrency(ticket.estimated_cost || 0)}</span></p>
-                    <p className="text-xs text-muted-foreground">Deposit: <span className="font-semibold text-green-600">{formatCurrency(ticket.deposit_paid || 0)}</span></p>
+                  <div className="text-right space-y-1">
+                    <p className="text-xs text-muted-foreground">Labor / Base: <span className="font-medium text-foreground">{formatCurrency(ticket.estimated_cost || 0)}</span></p>
+                    <p className="text-xs text-muted-foreground">Parts & Items: <span className="font-medium text-foreground">{formatCurrency(activeItemsTotal)}</span></p>
+                    <div className="border-t pt-1 mt-1">
+                      <p className="text-xs font-semibold">Total Invoice: <span className="text-primary font-bold">{formatCurrency(grandTotalInvoice)}</span></p>
+                      <p className="text-xs text-muted-foreground">Deposit Paid: <span className="font-medium text-emerald-600">-{formatCurrency(ticket.deposit_paid || 0)}</span></p>
+                      <p className="text-xs font-bold text-foreground mt-0.5">Balance Due: <span className={balanceRemaining > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600"}>{formatCurrency(balanceRemaining)}</span></p>
+                    </div>
                   </div>
                 </div>
               </CardContent>

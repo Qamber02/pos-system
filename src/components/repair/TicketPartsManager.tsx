@@ -7,7 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Plus, RotateCcw, Wrench, AlertTriangle, Truck, CheckCircle, ShieldAlert } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Plus, RotateCcw, Wrench, AlertTriangle, Truck, CheckCircle, ShieldAlert, ShoppingBag, Layers } from "lucide-react";
 import { toast } from "sonner";
 import { db, CachedProduct, CachedRepairTicketPart, TicketPartStatus, CachedRepairTicketPartHistory } from "@/lib/db";
 import { syncService } from "@/lib/syncService";
@@ -20,7 +21,7 @@ interface TicketPartsManagerProps {
 
 const statusBadgeStyles: Record<TicketPartStatus, { label: string; className: string; icon: any }> = {
   reserved: { label: "Reserved", className: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300", icon: Wrench },
-  consumed: { label: "Installed", className: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300", icon: CheckCircle },
+  consumed: { label: "Installed / Sold", className: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300", icon: CheckCircle },
   returned: { label: "Returned to Stock", className: "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300", icon: RotateCcw },
   broken: { label: "Broken / Defective", className: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300 font-semibold", icon: AlertTriangle },
   returned_to_supplier: { label: "Returned to Supplier", className: "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300", icon: Truck },
@@ -30,6 +31,8 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
   const formatCurrency = useFormatCurrency();
   const [selectedProductId, setSelectedProductId] = useState<string>("");
   const [quantity, setQuantity] = useState<string>("1");
+  const [attachType, setAttachType] = useState<'part' | 'product'>("part");
+  const [filterMode, setFilterMode] = useState<'parts' | 'products' | 'all'>("parts");
   const [loading, setLoading] = useState(false);
 
   // Status Change Dialog State
@@ -50,9 +53,16 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
     }));
   }) || [];
 
-  const handleReservePart = async () => {
+  // Filter available products for selection based on tab mode
+  const filteredProducts = products.filter(p => {
+    if (filterMode === 'parts') return p.is_repair_part === true;
+    if (filterMode === 'products') return !p.is_repair_part;
+    return true; // 'all'
+  });
+
+  const handleReserveItem = async () => {
     if (!selectedProductId) {
-      toast.error("Select a part product");
+      toast.error("Select an item to attach");
       return;
     }
     const qtyNum = parseInt(quantity) || 1;
@@ -63,7 +73,7 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
 
     const product = products.find(p => p.id === selectedProductId);
     if (!product) {
-      toast.error("Selected product not found");
+      toast.error("Selected item not found");
       return;
     }
 
@@ -85,7 +95,7 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
       const nowIso = new Date().toISOString();
       const nowTimestamp = Date.now();
 
-      // 1. Create repair ticket part record with price/cost snapshot
+      // 1. Create repair ticket part record with price/cost snapshot & item_type
       const partRecord: CachedRepairTicketPart = {
         id: crypto.randomUUID(),
         user_id: activeUserId,
@@ -95,6 +105,7 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
         unit_cost: product.cost_price || 0,
         unit_price: product.retail_price,
         status: 'reserved',
+        item_type: attachType,
         synced: false,
         lastModified: nowTimestamp,
         created_at: nowIso,
@@ -111,7 +122,7 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
         user_id: activeUserId,
         previous_status: null,
         new_status: 'reserved',
-        reason: `Attached part snapshot (Cost: ${product.cost_price || 0}, Price: ${product.retail_price})`,
+        reason: `Attached ${attachType === 'product' ? 'Product/Accessory' : 'Repair Part'} (Cost: ${product.cost_price || 0}, Price: ${product.retail_price})`,
         changed_by: activeUserId,
         synced: false,
         lastModified: nowTimestamp,
@@ -130,11 +141,11 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
 
       await syncService.queueOperation('products', 'update', updatedProduct);
 
-      toast.success(`Reserved ${qtyNum}x ${product.name} (Stock: ${product.stock_quantity} → ${updatedProduct.stock_quantity})`);
+      toast.success(`Attached ${qtyNum}x ${product.name} (${attachType === 'product' ? 'Product' : 'Part'}) — Stock: ${product.stock_quantity} → ${updatedProduct.stock_quantity}`);
       setSelectedProductId("");
       setQuantity("1");
     } catch (error: any) {
-      toast.error(error.message || "Failed to reserve part");
+      toast.error(error.message || "Failed to attach item");
     } finally {
       setLoading(false);
     }
@@ -151,7 +162,7 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
     if (!targetPart) return;
 
     if (newStatus === targetPart.status) {
-      toast.error("Part already has this status");
+      toast.error("Item already has this status");
       return;
     }
 
@@ -205,7 +216,6 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
       await syncService.queueOperation('repairTicketPartHistory', 'insert', historyEntry);
 
       // 3. Handle stock updates based on status transitions
-      // If moving to 'returned', restore stock
       if (newStatus === 'returned' && prevStatus !== 'returned') {
         const product = await db.products.get(targetPart.product_id);
         if (product) {
@@ -217,11 +227,9 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
             updated_at: nowIso
           };
           await syncService.queueOperation('products', 'update', updatedProduct);
-          toast.success(`Restored ${targetPart.quantity}x ${product.name} to inventory stock`);
+          toast.success(`Restored ${targetPart.quantity}x ${product.name} to stock`);
         }
-      }
-      // If moving FROM 'returned' to something else, re-deduct stock
-      else if (prevStatus === 'returned' && newStatus !== 'returned') {
+      } else if (prevStatus === 'returned' && newStatus !== 'returned') {
         const product = await db.products.get(targetPart.product_id);
         if (product) {
           const updatedProduct: CachedProduct = {
@@ -235,69 +243,103 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
         }
       }
 
-      toast.success(`Updated part status to: ${statusBadgeStyles[newStatus].label}`);
+      toast.success(`Updated item status to: ${statusBadgeStyles[newStatus].label}`);
       setStatusDialogOpen(false);
       setTargetPart(null);
     } catch (error: any) {
-      toast.error(error.message || "Failed to update part status");
+      toast.error(error.message || "Failed to update status");
     } finally {
       setLoading(false);
     }
   };
 
   const activePartsTotal = reservedParts
-    .filter(p => !['returned', 'broken', 'returned_to_supplier'].includes(p.status))
+    .filter(p => (p.item_type === 'part' || !p.item_type) && !['returned', 'broken', 'returned_to_supplier'].includes(p.status))
     .reduce((sum, p) => sum + (p.unit_price * p.quantity), 0);
+
+  const activeProductsTotal = reservedParts
+    .filter(p => p.item_type === 'product' && !['returned', 'broken', 'returned_to_supplier'].includes(p.status))
+    .reduce((sum, p) => sum + (p.unit_price * p.quantity), 0);
+
+  const totalItemsSum = activePartsTotal + activeProductsTotal;
 
   return (
     <div className="space-y-4 pt-2">
-      <div className="flex items-center justify-between">
+      {/* Header & Financial breakdown */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-2">
         <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-          <Wrench className="h-3.5 w-3.5" /> Consumable Repair Parts & Stock Reservation
+          <Layers className="h-4 w-4 text-primary" /> Attached Parts & POS Accessories
         </Label>
-        <span className="text-xs font-semibold">Active Parts Total: {formatCurrency(activePartsTotal)}</span>
+        <div className="flex items-center gap-3 text-xs">
+          <span className="text-muted-foreground">Parts: <strong className="text-foreground">{formatCurrency(activePartsTotal)}</strong></span>
+          <span className="text-muted-foreground">Accessories: <strong className="text-foreground">{formatCurrency(activeProductsTotal)}</strong></span>
+          <Badge variant="secondary" className="font-bold text-xs bg-primary/10 text-primary border-primary/20">
+            Total Items: {formatCurrency(totalItemsSum)}
+          </Badge>
+        </div>
       </div>
 
-      {/* Part Attach Form */}
-      <div className="flex gap-2 items-end bg-muted/20 p-2.5 rounded-lg border">
-        <div className="flex-1 space-y-1">
-          <Label className="text-xs">Select Part / Product</Label>
-          <Select value={selectedProductId} onValueChange={setSelectedProductId}>
-            <SelectTrigger className="h-8 text-xs">
-              <SelectValue placeholder="Choose repair part..." />
-            </SelectTrigger>
-            <SelectContent>
-              {products.map((p) => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.name} — Stock: {p.stock_quantity} ({formatCurrency(p.retail_price)})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      {/* Part / Product Attach Section with Mode Switcher */}
+      <div className="bg-muted/20 p-3 rounded-lg border space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-medium text-muted-foreground">Catalog Mode:</span>
+          <Tabs value={filterMode} onValueChange={(val: any) => { setFilterMode(val); setAttachType(val === 'products' ? 'product' : 'part'); setSelectedProductId(""); }} className="h-7">
+            <TabsList className="h-7 p-0.5 text-xs">
+              <TabsTrigger value="parts" className="text-[11px] h-6 px-2 flex items-center gap-1">
+                <Wrench className="h-3 w-3" /> Parts
+              </TabsTrigger>
+              <TabsTrigger value="products" className="text-[11px] h-6 px-2 flex items-center gap-1">
+                <ShoppingBag className="h-3 w-3" /> Accessories
+              </TabsTrigger>
+              <TabsTrigger value="all" className="text-[11px] h-6 px-2">
+                All Inventory
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
         </div>
 
-        <div className="w-20 space-y-1">
-          <Label className="text-xs">Qty</Label>
-          <Input
-            type="number"
-            min="1"
-            className="h-8 text-xs"
-            value={quantity}
-            onChange={(e) => setQuantity(e.target.value)}
-          />
-        </div>
+        <div className="flex gap-2 items-end">
+          <div className="flex-1 space-y-1">
+            <Label className="text-xs">
+              {filterMode === 'products' ? 'Select Accessory / POS Product' : filterMode === 'parts' ? 'Select Repair Part' : 'Select Item from Catalog'}
+            </Label>
+            <Select value={selectedProductId} onValueChange={setSelectedProductId}>
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue placeholder={filterMode === 'products' ? "Choose accessory (case, cable, charger)..." : "Choose repair part (screen, battery)..."} />
+              </SelectTrigger>
+              <SelectContent>
+                {filteredProducts.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name} {p.is_repair_part ? '(Part)' : '(Product)'} — Stock: {p.stock_quantity} ({formatCurrency(p.retail_price)})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-        <Button size="sm" className="h-8 text-xs" onClick={handleReservePart} disabled={loading}>
-          <Plus className="h-3.5 w-3.5 mr-1" /> Reserve
-        </Button>
+          <div className="w-20 space-y-1">
+            <Label className="text-xs">Qty</Label>
+            <Input
+              type="number"
+              min="1"
+              className="h-8 text-xs"
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+            />
+          </div>
+
+          <Button size="sm" className="h-8 text-xs" onClick={handleReserveItem} disabled={loading}>
+            <Plus className="h-3.5 w-3.5 mr-1" /> Attach
+          </Button>
+        </div>
       </div>
 
-      {/* Reserved Parts List */}
+      {/* Reserved Parts & Products List */}
       <div className="border rounded-md overflow-hidden">
         <Table>
           <TableHeader>
             <TableRow className="h-8 bg-muted/30">
-              <TableHead className="text-xs py-1">Part Name</TableHead>
+              <TableHead className="text-xs py-1">Type & Item Name</TableHead>
               <TableHead className="text-xs py-1">Qty</TableHead>
               <TableHead className="text-xs py-1">Cost / Price</TableHead>
               <TableHead className="text-xs py-1">Status</TableHead>
@@ -308,20 +350,32 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
             {reservedParts.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={5} className="text-center text-xs text-muted-foreground py-4">
-                  No repair parts attached to this ticket yet.
+                  No parts or accessories attached to this repair ticket yet.
                 </TableCell>
               </TableRow>
             ) : (
               reservedParts.map((part) => {
                 const style = statusBadgeStyles[part.status] || statusBadgeStyles.reserved;
                 const StatusIcon = style.icon;
+                const isAccessory = part.item_type === 'product';
 
                 return (
                   <TableRow key={part.id} className="h-9 text-xs">
                     <TableCell className="font-medium py-1">
-                      <div>{part.product?.name || 'Unknown Part'}</div>
+                      <div className="flex items-center gap-1.5">
+                        {isAccessory ? (
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 border-emerald-400 text-emerald-700 dark:text-emerald-300 flex items-center gap-1">
+                            <ShoppingBag className="h-2.5 w-2.5" /> Product
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 border-blue-400 text-blue-700 dark:text-blue-300 flex items-center gap-1">
+                            <Wrench className="h-2.5 w-2.5" /> Part
+                          </Badge>
+                        )}
+                        <span>{part.product?.name || 'Unknown Item'}</span>
+                      </div>
                       {part.status_reason && (
-                        <div className="text-[10px] text-muted-foreground italic truncate max-w-[180px]">
+                        <div className="text-[10px] text-muted-foreground italic truncate max-w-[200px] mt-0.5">
                           Note: {part.status_reason}
                         </div>
                       )}
@@ -347,7 +401,7 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="reserved">Reserved</SelectItem>
-                          <SelectItem value="consumed">Installed</SelectItem>
+                          <SelectItem value="consumed">Installed / Sold</SelectItem>
                           <SelectItem value="returned">Return Stock</SelectItem>
                           <SelectItem value="broken">Broken / Defective</SelectItem>
                           <SelectItem value="returned_to_supplier">Return to Supplier</SelectItem>
@@ -368,7 +422,7 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
           <DialogHeader>
             <DialogTitle className="text-base flex items-center gap-2">
               <ShieldAlert className="h-5 w-5 text-primary" />
-              Update Part Status
+              Update Item Status
             </DialogTitle>
             <DialogDescription className="text-xs">
               Changing status for <span className="font-semibold text-foreground">{targetPart?.product?.name}</span> to{" "}
@@ -396,7 +450,7 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
             <div className="space-y-1">
               <Label className="text-xs">Reason / Explanation (Required)</Label>
               <Input
-                placeholder="e.g. Screen cable torn during installation, Supplier defective..."
+                placeholder="e.g. Screen cable torn during installation, Customer changed mind..."
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 className="text-xs"
