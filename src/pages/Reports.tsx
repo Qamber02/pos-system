@@ -171,7 +171,7 @@ const Reports = () => {
       toast.loading("Generating comprehensive multi-sheet executive report...");
 
       const workbook = new ExcelJS.Workbook();
-      workbook.creator = "POS & Repair System";
+      workbook.creator = "POS & Repair Management System";
       workbook.created = new Date();
 
       // --- Helper: Build Styled Sheet ---
@@ -188,21 +188,34 @@ const Reports = () => {
         // Row 1: Banner Title
         const titleRow = ws.addRow([bannerTitleText]);
         ws.mergeCells(1, 1, 1, Math.max(headerTitles.length, 1));
-        titleRow.height = 34;
+        titleRow.height = 36;
         const tCell = titleRow.getCell(1);
         tCell.font = { name: 'Segoe UI', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
         tCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
         tCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
 
+        // Subheader Date Range
+        const subRow = ws.addRow([`Report Date Range: ${startDate ? format(startDate, "yyyy-MM-dd") : "All Time"} to ${endDate ? format(endDate, "yyyy-MM-dd") : "All Time"} | Exported: ${format(new Date(), "yyyy-MM-dd HH:mm")}`]);
+        ws.mergeCells(2, 1, 2, Math.max(headerTitles.length, 1));
+        subRow.height = 20;
+        subRow.getCell(1).font = { name: 'Segoe UI', size: 9.5, italic: true, color: { argb: 'FF475569' } };
+        subRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
+
         ws.addRow([]);
 
-        // Row 3: Headers
+        // Row 4: Headers
         const hRow = ws.addRow(headerTitles);
         hRow.height = 26;
         hRow.eachCell((cell, colNum) => {
           cell.font = { name: 'Segoe UI', size: 10.5, bold: true, color: { argb: 'FFFFFFFF' } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
           cell.alignment = { vertical: 'middle', horizontal: colTypes[colNum - 1] === 'text' ? 'left' : 'right' };
+          cell.border = {
+            top: { style: 'medium', color: { argb: 'FF0F172A' } },
+            bottom: { style: 'medium', color: { argb: 'FF0F172A' } },
+            left: { style: 'thin', color: { argb: 'FF334155' } },
+            right: { style: 'thin', color: { argb: 'FF334155' } }
+          };
         });
 
         // Data Rows
@@ -215,12 +228,21 @@ const Reports = () => {
             const type = colTypes[colNum - 1] || 'text';
             cell.font = { name: 'Segoe UI', size: 10, color: { argb: 'FF0F172A' } };
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+            cell.border = {
+              top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+              bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+              left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+              right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+            };
 
             if (type === 'currency') {
               cell.numFmt = '"PKR "#,##0.00';
               cell.alignment = { vertical: 'middle', horizontal: 'right' };
             } else if (type === 'number') {
               cell.numFmt = '#,##0';
+              cell.alignment = { vertical: 'middle', horizontal: 'right' };
+            } else if (type === 'percent') {
+              cell.numFmt = '0.00%';
               cell.alignment = { vertical: 'middle', horizontal: 'right' };
             } else {
               cell.alignment = { vertical: 'middle', horizontal: 'left' };
@@ -230,12 +252,20 @@ const Reports = () => {
 
         if (totalRowValues) {
           const totRow = ws.addRow(totalRowValues);
-          totRow.height = 25;
+          totRow.height = 26;
           totRow.eachCell((cell, colNum) => {
             const type = colTypes[colNum - 1] || 'text';
             cell.font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: 'FF0F172A' } };
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+            cell.border = {
+              top: { style: 'thin', color: { argb: 'FF0F172A' } },
+              bottom: { style: 'double', color: { argb: 'FF0F172A' } },
+              left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+              right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+            };
             if (type === 'currency') cell.numFmt = '"PKR "#,##0.00';
+            if (type === 'number') cell.numFmt = '#,##0';
+            if (type === 'percent') cell.numFmt = '0.00%';
           });
         }
 
@@ -245,33 +275,109 @@ const Reports = () => {
             const str = cell.value ? String(cell.value) : '';
             if (str.length > maxLen) maxLen = str.length;
           });
-          column.width = Math.min(maxLen + 4, 50);
+          column.width = Math.min(maxLen + 4, 55);
         });
       };
 
       // 1. EXECUTIVE SUMMARY SHEET
-      const summaryWs = workbook.addWorksheet("Executive Summary");
-      summaryWs.addRow(["COMPREHENSIVE POS & REPAIR FINANCIAL SUMMARY"]);
+      const summaryWs = workbook.addWorksheet("Executive Summary", { views: [{ showGridLines: true }] });
+      const titleR = summaryWs.addRow(["COMPREHENSIVE POS & REPAIR EXECUTIVE DASHBOARD"]);
       summaryWs.mergeCells(1, 1, 1, 3);
-      summaryWs.addRow([`Generated: ${format(new Date(), "yyyy-MM-dd HH:mm")}`]);
+      titleR.height = 36;
+      const tCell = titleR.getCell(1);
+      tCell.font = { name: 'Segoe UI', size: 15, bold: true, color: { argb: 'FFFFFFFF' } };
+      tCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+      tCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+      summaryWs.addRow([`Report Generated: ${format(new Date(), "yyyy-MM-dd HH:mm:ss")}`]);
+      summaryWs.addRow([`Date Filter: ${startDate ? format(startDate, "yyyy-MM-dd") : "All Time"} to ${endDate ? format(endDate, "yyyy-MM-dd") : "All Time"}`]);
       summaryWs.addRow([]);
+
+      const summaryHeader = summaryWs.addRow(["Financial Metric", "Value (PKR / Count)"]);
+      summaryHeader.height = 24;
+      [1, 2].forEach(c => {
+        const cell = summaryHeader.getCell(c);
+        cell.font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+      });
 
       const metrics = [
         ["POS Sales Revenue", totalSalesRevenue, 'currency'],
+        ["Est. POS Cost of Goods Sold", totalSalesCost, 'currency'],
+        ["Est. POS Net Sales Profit", posSalesProfit, 'currency'],
         ["Repair Jobs Revenue", totalRepairRevenue, 'currency'],
-        ["Wholesaler Part Expenses", totalWholesalerCost, 'currency'],
-        ["Refunds Processed", totalRefundsAmount, 'currency'],
-        ["Net Combined Profit", combinedNetProfit, 'currency'],
+        ["Wholesaler Sourced Part Expenses", totalWholesalerCost, 'currency'],
+        ["Net Repair Service Profit", repairProfit, 'currency'],
+        ["Refunds Processed & Deducted", totalRefundsAmount, 'currency'],
+        ["Net Combined Shop Profit", combinedNetProfit, 'currency'],
         ["Total Completed Repair Tickets", filteredRepairs.length, 'number'],
-        ["Total Sales Receipts", filteredSales.length, 'number'],
+        ["Total Counter Sales Receipts", filteredSales.length, 'number'],
       ];
 
-      summaryWs.addRow(["Metric", "Value"]);
-      metrics.forEach(([label, val, type]) => {
-        summaryWs.addRow([label, val]);
+      metrics.forEach(([label, val, type], idx) => {
+        const row = summaryWs.addRow([label, val]);
+        row.height = 22;
+        const bg = idx % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC';
+
+        const c1 = row.getCell(1);
+        c1.font = { name: 'Segoe UI', size: 10.5, bold: true, color: { argb: 'FF0F172A' } };
+        c1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+
+        const c2 = row.getCell(2);
+        c2.font = { name: 'Segoe UI', size: 10.5, bold: true, color: { argb: 'FF0F172A' } };
+        c2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        if (type === 'currency') c2.numFmt = '"PKR "#,##0.00';
+        if (type === 'number') c2.numFmt = '#,##0';
       });
 
-      // 2. REPAIR JOBS SHEET
+      summaryWs.columns.forEach((column) => {
+        let maxLen = 12;
+        column.eachCell!({ includeEmpty: false }, (cell) => {
+          const str = cell.value ? String(cell.value) : '';
+          if (str.length > maxLen) maxLen = str.length;
+        });
+        column.width = Math.min(maxLen + 4, 55);
+      });
+
+      // 2. ITEMIZED POS SALES DETAIL SHEET
+      const posDataRows: any[][] = [];
+      let posUnitsSoldTotal = 0;
+
+      filteredSales.forEach(sale => {
+        const dateStr = format(new Date(sale.created_at), "yyyy-MM-dd HH:mm");
+        const customerName = sale.customers?.name || "Walk-in Customer";
+        const paymentMethod = (sale.payment_method || "cash").toUpperCase();
+
+        sale.sale_items?.forEach(item => {
+          const prodName = item.product_name || "Product Item";
+          const qty = Number(item.quantity || 1);
+          const unitPrice = Number(item.unit_price || 0);
+          const itemRevenue = Number(item.subtotal || item.total_price || (unitPrice * qty));
+          posUnitsSoldTotal += qty;
+
+          posDataRows.push([
+            sale.receipt_number,
+            dateStr,
+            customerName,
+            prodName,
+            qty,
+            unitPrice,
+            itemRevenue,
+            paymentMethod
+          ]);
+        });
+      });
+
+      buildStyledSheet(
+        "POS Sales Detail",
+        "ITEMIZED COUNTER SALES & PRODUCT RECEIPTS RECORD",
+        ["Receipt #", "Date & Time", "Customer Name", "Product Name", "Quantity", "Unit Price (PKR)", "Item Revenue (PKR)", "Payment Method"],
+        posDataRows,
+        ['text', 'text', 'text', 'text', 'number', 'currency', 'currency', 'text'],
+        ["TOTALS", "", "", "", posUnitsSoldTotal, "", totalSalesRevenue, ""]
+      );
+
+      // 3. REPAIR JOBS SHEET
       const repairDataRows = filteredRepairs.map(t => {
         const parts = repairParts.filter(p => p.repair_ticket_id === t.id && !['returned', 'broken'].includes(p.status));
         const partCostSum = parts.reduce((sum, p) => sum + (p.unit_cost * p.quantity), 0);
@@ -299,7 +405,7 @@ const Reports = () => {
         ["TOTALS", "", "", "", "", totalRepairRevenue, totalWholesalerCost, repairProfit]
       );
 
-      // 3. WHOLESALER CONSIGNMENT SHEET
+      // 4. WHOLESALER CONSIGNMENT SHEET
       const intakeDataRows = filteredIntakes.map(i => [
         wholesalerMap.get(i.wholesaler_id) || "Unknown Supplier",
         format(new Date(i.intake_date || i.created_at || Date.now()), "yyyy-MM-dd"),
@@ -312,15 +418,19 @@ const Reports = () => {
         i.status.toUpperCase()
       ]);
 
+      const totalIntakePaid = filteredIntakes.reduce((sum, i) => sum + (i.amount_paid || 0), 0);
+      const totalIntakeOwed = totalWholesalerCost - totalIntakePaid;
+
       buildStyledSheet(
         "Wholesaler Consignment",
         "WHOLESALER INTAKES & SUPPLIER CREDIT RECORD",
         ["Wholesaler Name", "Date", "Item Name", "Qty", "Agreed Cost (PKR)", "Total Cost (PKR)", "Amount Paid (PKR)", "Remaining Owed (PKR)", "Status"],
         intakeDataRows,
-        ['text', 'text', 'text', 'number', 'currency', 'currency', 'currency', 'currency', 'text']
+        ['text', 'text', 'text', 'number', 'currency', 'currency', 'currency', 'currency', 'text'],
+        ["TOTALS", "", "", "", "", totalWholesalerCost, totalIntakePaid, totalIntakeOwed, ""]
       );
 
-      // 4. REFUNDS LOG SHEET
+      // 5. REFUNDS LOG SHEET
       const refundDataRows = filteredRefunds.map(r => [
         r.refund_number,
         format(new Date(r.created_at || Date.now()), "yyyy-MM-dd HH:mm"),
@@ -335,7 +445,8 @@ const Reports = () => {
         "PROCESSED REFUNDS AUDIT TRAIL",
         ["Refund #", "Date & Time", "Type", "Amount (PKR)", "Payment Method", "Reason"],
         refundDataRows,
-        ['text', 'text', 'text', 'currency', 'text', 'text']
+        ['text', 'text', 'text', 'currency', 'text', 'text'],
+        ["TOTALS", "", "", totalRefundsAmount, "", ""]
       );
 
       // Download Buffer
@@ -344,12 +455,12 @@ const Reports = () => {
       const downloadUrl = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = downloadUrl;
-      link.download = `Full_Sales_and_Repair_Report_${format(new Date(), "yyyy-MM-dd_HHmm")}.xlsx`;
+      link.download = `POS_and_Repair_Executive_Report_${format(new Date(), "yyyy-MM-dd_HHmm")}.xlsx`;
       link.click();
       window.URL.revokeObjectURL(downloadUrl);
 
       toast.dismiss();
-      toast.success("Comprehensive Sales & Repair Excel Report Downloaded!");
+      toast.success("Complete Executive Multi-Sheet Excel Report Downloaded!");
     } catch (error) {
       console.error("Export error:", error);
       toast.error("Failed to export report");
