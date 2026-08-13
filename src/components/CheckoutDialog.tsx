@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { CartItem } from "./Cart";
-import { Loader2, Printer } from "lucide-react";
+import { Loader2, Printer, MessageSquare, Phone } from "lucide-react";
 import defaultLogo from "@/assets/default-logo.png";
 import { UserProfile, db, CachedSale, CachedSaleItem, CachedLoan } from "@/lib/db";
 import { useOfflineCustomers } from "@/hooks/useOfflineCustomers";
@@ -47,16 +47,60 @@ export const CheckoutDialog = ({
   const [selectedCustomer, setSelectedCustomer] = useState<string>("walk-in");
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [amountPaid, setAmountPaid] = useState(total.toString());
+  const [receiptPhone, setReceiptPhone] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const formatPrice = useFormatCurrency();
-  const [shouldPrint, setShouldPrint] = useState(false);
 
   useEffect(() => {
-    // No more fetching, just update amountPaid when total changes
     if (open) {
       setAmountPaid(total.toFixed(2));
     }
   }, [open, total]);
+
+  const handleCustomerChange = (customerId: string) => {
+    setSelectedCustomer(customerId);
+    if (customerId !== "walk-in") {
+      const cust = customers.find(c => c.id === customerId);
+      if (cust?.phone) {
+        setReceiptPhone(cust.phone);
+      }
+    }
+  };
+
+  const sendWhatsAppReceipt = (phone: string, receiptNumber: string) => {
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    if (!cleanPhone) {
+      toast.error("Please enter a valid phone number with country code (e.g. 923001234567)");
+      return;
+    }
+
+    const storeName = settings.business_name || "POS SHOPPING";
+    const footer = settings.receipt_footer || "Thank you for your business!";
+    
+    const itemsText = cartItems.map(item => 
+      `• ${item.name} x${item.quantity} = ${formatPrice(item.price * item.quantity)}`
+    ).join('\n');
+
+    const text = `🧾 *RECEIPT FROM ${storeName.toUpperCase()}*\n` +
+      `-----------------------------------\n` +
+      `*Receipt #:* ${receiptNumber}\n` +
+      `*Date:* ${new Date().toLocaleString()}\n` +
+      `*Payment:* ${paymentMethod.toUpperCase()}\n` +
+      `-----------------------------------\n` +
+      `*ITEMS:*\n${itemsText}\n` +
+      `-----------------------------------\n` +
+      `*Subtotal:* ${formatPrice(subtotal)}\n` +
+      (discount > 0 ? `*Discount:* -${formatPrice(discount)}\n` : '') +
+      (taxAmount > 0 ? `*Tax:* ${formatPrice(taxAmount)}\n` : '') +
+      `*TOTAL:* ${formatPrice(total)}\n` +
+      (paymentMethod === 'cash' ? `*Paid:* ${formatPrice(parseFloat(amountPaid) || 0)}\n*Change:* ${formatPrice(calculateChange())}\n` : '') +
+      `-----------------------------------\n` +
+      `${footer}`;
+
+    const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank');
+  };
+
 
   const calculateChange = () => {
     const paid = parseFloat(amountPaid) || 0;
@@ -68,11 +112,16 @@ export const CheckoutDialog = ({
   };
 
   // --- THIS IS THE MAIN OFFLINE-FIRST FUNCTION ---
-  const handleCompleteSale = async (print: boolean = false) => {
+  const handleCompleteSale = async (action: 'complete' | 'print' | 'whatsapp' = 'complete') => {
     const paid = parseFloat(amountPaid) || 0;
 
     if (paid < total && paymentMethod !== 'loan') {
       toast.error("Amount paid is less than total");
+      return;
+    }
+
+    if (action === 'whatsapp' && !receiptPhone.trim()) {
+      toast.error("Please enter a phone number to send the WhatsApp receipt");
       return;
     }
 
@@ -112,7 +161,7 @@ export const CheckoutDialog = ({
       const saleItems: CachedSaleItem[] = cartItems.map(item => ({
         id: crypto.randomUUID(),
         sale_id: newSaleId,
-        product_id: item.productId || (item.repairTicketId ? '00000000-0000-0000-0000-000000000000' : item.id), // Fallback UUID for repair items
+        product_id: item.productId || (item.repairTicketId ? '00000000-0000-0000-0000-000000000000' : item.id),
         product_name: item.name,
         quantity: item.quantity,
         unit_price: item.price,
@@ -127,7 +176,6 @@ export const CheckoutDialog = ({
 
       // 4. Create Stock Update & Serialized Device / Repair Ticket Lifecycle Updates
       const stockUpdatesPromises = cartItems.map(async (item) => {
-        // --- A. HANDLE SERIALIZED DEVICE (IMEI) SOLD ---
         if (item.deviceIdentifierId) {
           const device = await db.deviceIdentifiers.get(item.deviceIdentifierId);
           if (device) {
@@ -143,7 +191,6 @@ export const CheckoutDialog = ({
           }
         }
 
-        // --- B. HANDLE REPAIR TICKET COMPLETED ---
         if (item.repairTicketId) {
           const ticket = await db.repairTickets.get(item.repairTicketId);
           if (ticket) {
@@ -156,7 +203,6 @@ export const CheckoutDialog = ({
             };
             await syncService.queueOperation('repairTickets', 'update', updatedTicket);
 
-            // Audit Log
             const historyEntry = {
               id: crypto.randomUUID(),
               repair_ticket_id: ticket.id,
@@ -171,10 +217,9 @@ export const CheckoutDialog = ({
             };
             await syncService.queueOperation('repairTicketHistory', 'insert', historyEntry);
           }
-          return []; // Repair payout does not decrement inventory stock
+          return [];
         }
 
-        // --- C. HANDLE PRODUCT / VARIANT RETAIL STOCK ---
         if (item.variantId) {
           const variant = await db.productVariants.get(item.variantId);
           const parentId = item.productId || item.id;
@@ -242,7 +287,6 @@ export const CheckoutDialog = ({
         return [];
       });
 
-      // Flatten the array of arrays
       const stockUpdates = (await Promise.all(stockUpdatesPromises)).flat();
 
       // 5. Use queueOperation to save locally AND queue for sync
@@ -273,7 +317,7 @@ export const CheckoutDialog = ({
             amount_paid: paid,
             remaining_balance: loanAmount,
             loan_date: now.toISOString(),
-            due_date: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(), // Default 30 days
+            due_date: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
             status: 'active',
             notes: `Auto-generated from Sale #${receiptNumber}`,
             user_id: profile.id,
@@ -285,19 +329,21 @@ export const CheckoutDialog = ({
         }
       }
 
-      // 7. Handle Printing - DECOUPLED from success flow
-      if (print) {
-        // We don't await this because we want to close the dialog immediately
+      // 7. Handle Printing or WhatsApp dispatch
+      if (action === 'print') {
         handlePrintReceipt(receiptNumber, sale).catch(err => {
           console.error("Printing failed:", err);
-          toast.error("Sale saved, but printing failed. Please reprint from history.");
+          toast.error("Sale saved, but printing failed.");
         });
         toast.success(`Sale completed! Printing...`);
+      } else if (action === 'whatsapp') {
+        sendWhatsAppReceipt(receiptPhone, receiptNumber);
+        toast.success(`Sale completed! Opening WhatsApp...`);
       } else {
         toast.success(`Sale completed!`);
       }
 
-      // 8. Close Dialog & Reset - IMMEDIATELY
+      // 8. Close Dialog & Reset
       onComplete();
       onOpenChange(false);
 
@@ -310,10 +356,8 @@ export const CheckoutDialog = ({
   };
 
   const handlePrintReceipt = async (receiptNumber: string, sale: any) => {
-    // Hidden Iframe Approach
     const logoSrc = settings.logo_url || defaultLogo;
 
-    // Create a hidden iframe
     const iframe = document.createElement('iframe');
     iframe.style.display = 'none';
     document.body.appendChild(iframe);
@@ -341,7 +385,7 @@ export const CheckoutDialog = ({
         <div class="logo">
           <img src="${logoSrc}" alt="Logo" />
         </div>
-        <h1>${settings.business_name}</h1>
+        <h1>${settings.business_name || 'My Store'}</h1>
         <div class="info">
           <div>Receipt: ${receiptNumber}</div>
           <div>Date: ${new Date(sale.created_at).toLocaleString()}</div>
@@ -396,12 +440,18 @@ export const CheckoutDialog = ({
         </table>
         <hr />
         <div class="footer">
-          ${settings.receipt_footer}
+          ${settings.receipt_footer || 'Thank you for your business!'}
         </div>
         <script>
           window.onload = function() {
-            window.print();
-          }
+            var img = document.querySelector('.logo img');
+            if (img && !img.complete) {
+              img.onload = function() { window.print(); };
+              img.onerror = function() { window.print(); };
+            } else {
+              window.print();
+            }
+          };
         </script>
       </body>
       </html>
@@ -413,14 +463,9 @@ export const CheckoutDialog = ({
       doc.write(receiptHTML);
       doc.close();
 
-      // Wait for print to be initiated (or failed) then remove iframe
-      // Note: There is no reliable cross-browser way to know when print is done.
-      // We just remove the iframe after a sufficient delay.
       setTimeout(() => {
         document.body.removeChild(iframe);
       }, 5000);
-    } else {
-      console.error("Could not access iframe document");
     }
   };
 
@@ -432,18 +477,18 @@ export const CheckoutDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px] max-h-[90vh] flex flex-col">
+      <DialogContent className="sm:max-w-[520px] max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Complete Sale</DialogTitle>
           <DialogDescription>
-            Process payment and complete the transaction
+            Process payment, issue receipts, or send via WhatsApp
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4 overflow-y-auto flex-1">
           <div className="space-y-2">
             <Label>Customer</Label>
-            <Select value={selectedCustomer} onValueChange={setSelectedCustomer}>
+            <Select value={selectedCustomer} onValueChange={handleCustomerChange}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -451,11 +496,24 @@ export const CheckoutDialog = ({
                 <SelectItem value="walk-in">Walk-in Customer</SelectItem>
                 {customers.map((customer) => (
                   <SelectItem key={customer.id} value={customer.id}>
-                    {customer.name}
+                    {customer.name} {customer.phone ? `(${customer.phone})` : ''}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Phone className="h-3.5 w-3.5 text-emerald-600" />
+              Receipt Phone Number / WhatsApp (Optional)
+            </Label>
+            <Input
+              type="tel"
+              placeholder="e.g. 923001234567"
+              value={receiptPhone}
+              onChange={(e) => setReceiptPhone(e.target.value)}
+            />
           </div>
 
           <div className="space-y-2">
@@ -468,7 +526,7 @@ export const CheckoutDialog = ({
                 setAmountPaid(total.toString());
               }
             }}>
-              <TabsList className="grid w-full grid-cols-3">
+              <TabsList className="grid w-full grid-cols-4">
                 <TabsTrigger value="cash">Cash</TabsTrigger>
                 <TabsTrigger value="card">Card</TabsTrigger>
                 <TabsTrigger value="loan">Loan</TabsTrigger>
@@ -569,31 +627,40 @@ export const CheckoutDialog = ({
           )}
         </div>
 
-        {/* This is the UI fix for the footer */}
-        <DialogFooter className="mt-4 pt-4 border-t bg-background flex-col sm:flex-row gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isProcessing} className="flex-1">
+        <DialogFooter className="mt-4 pt-4 border-t bg-background flex flex-col sm:flex-row gap-2">
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isProcessing} className="w-full sm:w-auto">
             Cancel
           </Button>
           <Button
-            onClick={() => handleCompleteSale(false)}
+            onClick={() => handleCompleteSale('complete')}
             disabled={isProcessing}
             variant="secondary"
             className="flex-1"
           >
             {isProcessing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Complete Sale
+            Complete
           </Button>
           <Button
-            onClick={() => handleCompleteSale(true)}
+            onClick={() => handleCompleteSale('whatsapp')}
+            disabled={isProcessing}
+            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+          >
+            {isProcessing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            <MessageSquare className="mr-2 h-4 w-4" />
+            WhatsApp
+          </Button>
+          <Button
+            onClick={() => handleCompleteSale('print')}
             disabled={isProcessing}
             className="flex-1"
           >
             {isProcessing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             <Printer className="mr-2 h-4 w-4" />
-            Complete & Print
+            Print
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 };
+

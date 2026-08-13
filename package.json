@@ -111,6 +111,7 @@
   "build": {
     "appId": "com.pos.shopping",
     "productName": "POS Shopping",
+    "executableName": "POS-Shopping",
     "directories": {
       "output": "release"
     },
@@ -119,12 +120,9 @@
       "electron/**/*"
     ],
     "win": {
-      "target": "nsis",
-      "icon": "src/assets/app-icon.png"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "target": ["portable", "zip"],
+      "icon": "src/assets/app-icon.png",
+      "signAndEditExecutable": false
     }
   }
 }

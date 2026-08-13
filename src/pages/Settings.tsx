@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import defaultLogo from "@/assets/default-logo.png";
 import { db } from "@/lib/db";
 import { seedDemoDataForUser } from "@/lib/seedDemoData";
+import { syncService } from "@/lib/syncService";
 
 const Settings = () => {
   const navigate = useNavigate();
@@ -63,32 +64,55 @@ const Settings = () => {
 
   const fetchSettings = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data, error } = await supabase
-        .from("settings")
-        .select("*")
-        .eq("user_id", user.id)
-        .maybeSingle();
-
-      if (error) throw error;
-
-      if (data) {
-        setSettingsId(data.id);
+      // 1. Try reading local Dexie database first (instant offline response)
+      const localSetting = await db.settings.toCollection().first();
+      if (localSetting) {
+        setSettingsId(localSetting.id);
         setForm({
-          business_name: data.business_name || "My Store",
-          tax_rate: data.tax_rate?.toString() || "0",
-          currency_symbol: data.currency_symbol || "PKR",
-          receipt_footer: data.receipt_footer || "Thank you for your business!",
-          logo_url: data.logo_url || "",
+          business_name: localSetting.business_name || "My Store",
+          tax_rate: localSetting.tax_rate?.toString() || "0",
+          currency_symbol: localSetting.currency_symbol || "PKR",
+          receipt_footer: localSetting.receipt_footer || "Thank you for your business!",
+          logo_url: localSetting.logo_url || "",
         });
-        if (data.logo_url) {
-          setLogoPreview(data.logo_url);
+        if (localSetting.logo_url) {
+          setLogoPreview(localSetting.logo_url);
+        }
+      }
+
+      // 2. Fetch from Supabase Cloud if online
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data } = await supabase
+          .from("settings")
+          .select("*")
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+        if (data) {
+          setSettingsId(data.id);
+          setForm({
+            business_name: data.business_name || "My Store",
+            tax_rate: data.tax_rate?.toString() || "0",
+            currency_symbol: data.currency_symbol || "PKR",
+            receipt_footer: data.receipt_footer || "Thank you for your business!",
+            logo_url: data.logo_url || "",
+          });
+          if (data.logo_url) {
+            setLogoPreview(data.logo_url);
+          }
+
+          // Cache in local Dexie DB
+          await db.settings.put({
+            ...data,
+            id: data.id,
+            synced: true,
+            lastModified: new Date(data.updated_at || Date.now()).getTime(),
+          });
         }
       }
     } catch (error: any) {
-      console.error("Error loading settings:", error);
+      console.log("Settings loaded from local DB fallback:", error?.message);
     }
   };
 
@@ -109,54 +133,43 @@ const Settings = () => {
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not authenticated");
+      const currentProfile = await db.userProfile.toCollection().first();
+      const userId = user?.id || currentProfile?.id;
 
+      if (!userId) throw new Error("User session not active");
+
+      const targetId = settingsId || crypto.randomUUID();
       const settingsData = {
-        business_name: form.business_name,
+        id: targetId,
+        user_id: userId,
+        business_name: form.business_name.trim() || "My Store",
         tax_rate: parseFloat(form.tax_rate) || 0,
-        currency_symbol: form.currency_symbol,
-        receipt_footer: form.receipt_footer || null,
+        currency_symbol: form.currency_symbol || "PKR",
+        receipt_footer: form.receipt_footer.trim() || "Thank you for your business!",
         logo_url: form.logo_url || null,
-        user_id: user.id,
+        synced: false,
+        lastModified: Date.now(),
+        updated_at: new Date().toISOString(),
       };
 
-      if (settingsId) {
-        const { error } = await supabase
-          .from("settings")
-          .update(settingsData)
-          .eq("id", settingsId);
-        if (error) throw error;
+      // Save locally to Dexie immediately
+      await db.settings.put(settingsData);
+      setSettingsId(targetId);
 
-        // Update local IndexedDB
-        await db.settings.put({
-          id: settingsId,
-          ...settingsData,
-          synced: true,
-          lastModified: Date.now(),
-        });
-      } else {
-        const { data, error } = await supabase
-          .from("settings")
-          .insert(settingsData)
-          .select()
-          .single();
-        if (error) throw error;
-        if (data) {
-          setSettingsId(data.id);
+      // Queue operation for Cloud Sync
+      await syncService.queueOperation('settings', settingsId ? 'update' : 'insert', {
+        id: targetId,
+        user_id: userId,
+        business_name: settingsData.business_name,
+        tax_rate: settingsData.tax_rate,
+        currency_symbol: settingsData.currency_symbol,
+        receipt_footer: settingsData.receipt_footer,
+        logo_url: settingsData.logo_url,
+      });
 
-          // Add to local IndexedDB
-          await db.settings.put({
-            id: data.id,
-            ...settingsData,
-            synced: true,
-            lastModified: Date.now(),
-          });
-        }
-      }
-
-      toast.success("Settings saved successfully");
+      toast.success("Settings saved successfully!");
     } catch (error: any) {
-      toast.error(error.message);
+      toast.error(error.message || "Failed to save settings");
     } finally {
       setLoading(false);
     }

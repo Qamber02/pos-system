@@ -13,6 +13,8 @@ import defaultLogo from "@/assets/default-logo.png";
 import { db } from "@/lib/db";
 import { syncService } from "@/lib/syncService";
 
+import { useOfflineSettings } from "@/hooks/useOfflineSettings";
+
 interface NavItem {
   path: string;
   icon: any;
@@ -26,34 +28,12 @@ export const Navigation = () => {
   const navigate = useNavigate();
 
   const { profile, role, isAdmin } = useUserRole();
+  const { settings } = useOfflineSettings();
 
-  const [logoUrl, setLogoUrl] = useState<string>(defaultLogo);
-  const [businessName, setBusinessName] = useState<string>("POS SHOPPING");
+  const logoUrl = settings.logo_url || defaultLogo;
+  const businessName = settings.business_name || "POS SHOPPING";
   const [isSyncing, setIsSyncing] = useState(false);
 
-  useEffect(() => {
-    fetchSettings();
-  }, []);
-
-  const fetchSettings = async () => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data } = await supabase
-        .from("settings")
-        .select("logo_url, business_name")
-        .eq("user_id", user.id)
-        .maybeSingle();
-
-      if (data) {
-        if (data.logo_url) setLogoUrl(data.logo_url);
-        if (data.business_name) setBusinessName(data.business_name);
-      }
-    } catch (error) {
-      console.error("Error loading settings (offline expected):", error);
-    }
-  };
 
   const handleLogout = async () => {
     try {

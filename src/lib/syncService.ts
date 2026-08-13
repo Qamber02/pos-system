@@ -93,21 +93,26 @@ class SyncService {
       // 1. PUSH local changes (uploads) FIRST
       await this.processSyncQueue();
 
-      // 2. PULL remote changes (downloads) SECOND - Parallel Execution
-      await Promise.all([
-        this.syncProducts(user.id, force),
-        this.syncCategories(user.id, force),
-        this.syncCustomers(user.id, force),
-        this.syncSettings(user.id, force),
-        this.syncProductVariants(user.id, force),
-        this.syncLoans(user.id, force),
-        this.syncDeviceIdentifiers(user.id, force),
-        this.syncPartCompatibility(user.id, force),
-        this.syncRepairTickets(user.id, force),
-        this.syncRepairTicketHistory(user.id, force),
-        this.syncTechnicians(user.id, force),
-        this.syncRepairTicketParts(user.id, force)
-      ]);
+      // 2. PULL remote changes (downloads) SECOND - Throttled Sequential Execution to avoid 429 Rate Limits
+      const pullTasks = [
+        () => this.syncProducts(user.id, force),
+        () => this.syncCategories(user.id, force),
+        () => this.syncCustomers(user.id, force),
+        () => this.syncSettings(user.id, force),
+        () => this.syncProductVariants(user.id, force),
+        () => this.syncLoans(user.id, force),
+        () => this.syncDeviceIdentifiers(user.id, force),
+        () => this.syncPartCompatibility(user.id, force),
+        () => this.syncRepairTickets(user.id, force),
+        () => this.syncRepairTicketHistory(user.id, force),
+        () => this.syncTechnicians(user.id, force),
+        () => this.syncRepairTicketParts(user.id, force)
+      ];
+
+      for (const task of pullTasks) {
+        await task();
+        await new Promise(r => setTimeout(r, 100)); // 100ms throttle between table pulls
+      }
 
       console.log('Sync completed successfully');
     } catch (error) {
@@ -563,10 +568,10 @@ class SyncService {
 
     // Fix for sale_items schema mismatch
     if (supabaseTable === 'sale_items') {
-      if (dataForSupabase.total_price !== undefined) {
-        dataForSupabase.subtotal = dataForSupabase.total_price;
-        delete dataForSupabase.total_price;
-      }
+      const priceToUse = dataForSupabase.total_price ?? dataForSupabase.subtotal ?? ((dataForSupabase.unit_price || 0) * (dataForSupabase.quantity || 1));
+      dataForSupabase.subtotal = priceToUse;
+      dataForSupabase.total_price = priceToUse;
+      delete dataForSupabase.variant_name;
       delete dataForSupabase.user_id;
     }
 
@@ -638,7 +643,8 @@ class SyncService {
             if (product) {
               // Check if it's already in the queue
               const existing = await db.syncQueue
-                .where({ table: 'products' })
+                .where('table')
+                .equals('products')
                 .filter(item => item.data.id === productId)
                 .first();
 

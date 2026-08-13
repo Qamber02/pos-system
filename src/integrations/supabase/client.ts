@@ -2,18 +2,22 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-let url = import.meta.env.VITE_SUPABASE_URL;
-let publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+// Default Supabase Cloud credentials for standalone builds (Electron / Production)
+const DEFAULT_SUPABASE_URL = "https://pnxqxsqnrotberrwffhw.supabase.co";
+const DEFAULT_SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBueHF4c3Fucm90YmVycndmZmh3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY2MTQ3MjgsImV4cCI6MjEwMjE5MDcyOH0.68AK59fiNQLV80CuXSZGi2epic8O8Ey9C4z8fOxCmWo";
 
-// Fallback to local Supabase defaults if invalid or placeholder
+let url = import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL;
+let publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_KEY;
+
+// Fallback check
 if (!url || typeof url !== 'string' || (!url.startsWith('http://') && !url.startsWith('https://'))) {
-  console.warn('Invalid or missing VITE_SUPABASE_URL. Falling back to local Supabase URL (http://127.0.0.1:54331).');
-  url = 'http://127.0.0.1:54331';
+  console.warn('Invalid or missing VITE_SUPABASE_URL. Falling back to default Cloud URL.');
+  url = DEFAULT_SUPABASE_URL;
 }
 
 if (!publishableKey || publishableKey === 'YOUR_ID' || publishableKey === 'YOUR ID') {
-  console.warn('Invalid or missing VITE_SUPABASE_PUBLISHABLE_KEY. Using local default key.');
-  publishableKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ0aXp6eHJhaXFxcmZ1b29remlwIiwicm9sZSI6ImFub24iLCJpYXQiOjE2MDAwMDAwMDAsImV4cCI6MjUwMDAwMDAwMH0.placeholder';
+  console.warn('Invalid or missing key. Using default Cloud key.');
+  publishableKey = DEFAULT_SUPABASE_KEY;
 }
 
 export const supabase = createClient<Database>(url, publishableKey, {

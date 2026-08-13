@@ -6,23 +6,33 @@ export function useOfflineSettings() {
   const { profile } = useUserRole();
   const userId = profile?.id;
 
-  const settings = useLiveQuery(
+  const rawSettings = useLiveQuery(
     async () => {
-      if (!userId) return null;
-      const result = await db.settings.where('user_id').equals(userId).first();
-      return result || null;
+      if (userId) {
+        const byUser = await db.settings.where('user_id').equals(userId).first();
+        if (byUser) return byUser;
+        const byId = await db.settings.get(userId);
+        if (byId) return byId;
+      }
+      return (await db.settings.toCollection().first()) || null;
     },
     [userId]
   );
 
+  const settings = {
+    id: rawSettings?.id || userId || 'default',
+    user_id: rawSettings?.user_id || userId || '',
+    tax_rate: typeof rawSettings?.tax_rate === 'number' ? rawSettings.tax_rate : 0,
+    business_name: rawSettings?.business_name?.trim() || 'My Store',
+    logo_url: rawSettings?.logo_url || '',
+    currency_symbol: rawSettings?.currency_symbol || 'PKR',
+    receipt_footer: rawSettings?.receipt_footer?.trim() || 'Thank you for your business!',
+    synced: rawSettings?.synced ?? true,
+    lastModified: rawSettings?.lastModified || Date.now(),
+  };
+
   return {
-    settings: settings || {
-      tax_rate: 0,
-      business_name: 'POS SHOPPING',
-      logo_url: '/default-logo.png',
-      currency_symbol: 'PKR',
-      receipt_footer: 'Thank you for your business!'
-    },
-    loading: settings === undefined,
+    settings,
+    loading: rawSettings === undefined,
   };
 }
