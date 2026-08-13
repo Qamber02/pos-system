@@ -47,8 +47,9 @@ CREATE TABLE IF NOT EXISTS public.wholesaler_payments (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 4. Link repair_ticket_parts to wholesaler_intakes
+-- 4. Link repair_ticket_parts to wholesaler_intakes & wholesalers
 ALTER TABLE public.repair_ticket_parts
+  ADD COLUMN IF NOT EXISTS wholesaler_id UUID REFERENCES public.wholesalers(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS wholesaler_intake_id UUID REFERENCES public.wholesaler_intakes(id) ON DELETE SET NULL;
 
 -- Enable RLS & Policies

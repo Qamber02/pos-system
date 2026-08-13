@@ -250,6 +250,8 @@ export interface CachedRepairTicketPart {
   status_reason?: string | null;
   status_updated_at?: string | null;
   item_type?: 'part' | 'product';
+  wholesaler_id?: string | null;
+  wholesaler_intake_id?: string | null;
   synced: boolean;
   lastModified: number;
   created_at?: string;
