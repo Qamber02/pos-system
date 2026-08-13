@@ -11,7 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Clock, Smartphone, User, DollarSign, ArrowRight, CheckCircle2, AlertCircle, Wrench, ShieldAlert, UserCheck } from "lucide-react";
 import { toast } from "sonner";
 import { syncService } from "@/lib/syncService";
-import { CachedCustomer, CachedRepairTicket, CachedRepairTicketHistory, CachedTechnician, RepairStatus } from "@/lib/db";
+import { db, CachedCustomer, CachedRepairTicket, CachedRepairTicketHistory, CachedTechnician, RepairStatus } from "@/lib/db";
+import { useLiveQuery } from "dexie-react-hooks";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { TicketPartsManager } from "@/components/repair/TicketPartsManager";
 
@@ -63,11 +64,34 @@ export const RepairTicketDetailModal = ({
   const [updating, setUpdating] = useState(false);
   const [statusNote, setStatusNote] = useState("");
 
+  const partHistory = useLiveQuery(async () => {
+    if (!ticket?.id) return [];
+    return await db.repairTicketPartHistory
+      .where('repair_ticket_id')
+      .equals(ticket.id)
+      .toArray();
+  }, [ticket?.id]) || [];
+
   if (!ticket) return null;
 
-  const ticketHistory = history
-    .filter(h => h.repair_ticket_id === ticket.id)
-    .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+  const combinedAuditLogs = [
+    ...history
+      .filter(h => h.repair_ticket_id === ticket.id)
+      .map(h => ({
+        id: h.id,
+        type: 'ticket' as const,
+        title: h.previous_status ? `Status: ${h.previous_status.replace('_', ' ')} → ${h.new_status.replace('_', ' ')}` : `Status: ${h.new_status.replace('_', ' ')}`,
+        notes: h.notes,
+        created_at: h.created_at || new Date().toISOString()
+      })),
+    ...partHistory.map(ph => ({
+      id: ph.id,
+      type: 'part' as const,
+      title: ph.previous_status ? `Part: ${ph.previous_status} → ${ph.new_status}` : `Part: ${ph.new_status}`,
+      notes: ph.reason,
+      created_at: ph.created_at || new Date().toISOString()
+    }))
+  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   const handleAssignTech = async (techId: string) => {
     setUpdating(true);
@@ -275,23 +299,23 @@ export const RepairTicketDetailModal = ({
                 </div>
 
                 <div className="flex-1 overflow-y-auto max-h-[400px] space-y-3 pr-2">
-                  {ticketHistory.length === 0 ? (
+                  {combinedAuditLogs.length === 0 ? (
                     <div className="text-xs text-muted-foreground text-center py-6">
                       No status history recorded yet.
                     </div>
                   ) : (
-                    ticketHistory.map((h) => (
-                      <div key={h.id} className="text-xs border-l-2 border-primary/50 pl-3 py-1 space-y-1">
+                    combinedAuditLogs.map((log) => (
+                      <div key={log.id} className={`text-xs border-l-2 pl-3 py-1 space-y-1 ${log.type === 'part' ? 'border-amber-500' : 'border-primary/50'}`}>
                         <div className="flex items-center justify-between text-muted-foreground">
-                          <span className="font-semibold text-foreground capitalize">
-                            {h.previous_status ? `${h.previous_status.replace('_', ' ')} → ` : ''}
-                            <span className="text-primary">{h.new_status.replace('_', ' ')}</span>
+                          <span className="font-semibold text-foreground capitalize flex items-center gap-1.5">
+                            {log.type === 'part' && <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-400 text-amber-600">Part</Badge>}
+                            {log.title}
                           </span>
                           <span className="text-[10px]">
-                            {new Date(h.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </span>
                         </div>
-                        {h.notes && <p className="text-muted-foreground bg-muted/20 p-1.5 rounded">{h.notes}</p>}
+                        {log.notes && <p className="text-muted-foreground bg-muted/20 p-1.5 rounded">{log.notes}</p>}
                       </div>
                     ))
                   )}

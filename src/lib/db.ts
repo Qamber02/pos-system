@@ -235,6 +235,8 @@ export interface CachedTechnician {
   updated_at?: string;
 }
 
+export type TicketPartStatus = 'reserved' | 'consumed' | 'returned' | 'broken' | 'returned_to_supplier';
+
 export interface CachedRepairTicketPart {
   id: string;
   user_id: string;
@@ -244,11 +246,27 @@ export interface CachedRepairTicketPart {
   quantity: number;
   unit_cost: number;
   unit_price: number;
-  status: 'reserved' | 'consumed' | 'returned';
+  status: TicketPartStatus;
+  status_reason?: string | null;
+  status_updated_at?: string | null;
   synced: boolean;
   lastModified: number;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface CachedRepairTicketPartHistory {
+  id: string;
+  repair_ticket_part_id: string;
+  repair_ticket_id: string;
+  user_id: string;
+  previous_status?: string | null;
+  new_status: TicketPartStatus;
+  reason?: string | null;
+  changed_by?: string | null;
+  synced: boolean;
+  lastModified: number;
+  created_at?: string;
 }
 
 // --- DATABASE CLASS ---
@@ -271,6 +289,7 @@ export class OfflineDatabase extends Dexie {
   repairTicketHistory!: Table<CachedRepairTicketHistory>;
   technicians!: Table<CachedTechnician>;
   repairTicketParts!: Table<CachedRepairTicketPart>;
+  repairTicketPartHistory!: Table<CachedRepairTicketPartHistory>;
 
   constructor() {
     super('ShopAppOfflineDB');
@@ -294,7 +313,8 @@ export class OfflineDatabase extends Dexie {
       repairTickets: 'id, user_id, ticket_number, customer_id, device_identifier_id, status, lastModified, synced',
       repairTicketHistory: 'id, repair_ticket_id, user_id, lastModified, synced',
       technicians: 'id, user_id, name, status, lastModified, synced',
-      repairTicketParts: 'id, user_id, repair_ticket_id, product_id, status, lastModified, synced'
+      repairTicketParts: 'id, user_id, repair_ticket_id, product_id, status, lastModified, synced',
+      repairTicketPartHistory: 'id, repair_ticket_part_id, repair_ticket_id, user_id, lastModified, synced'
     });
   }
 
