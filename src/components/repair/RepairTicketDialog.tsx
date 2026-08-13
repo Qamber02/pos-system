@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Wrench, Truck, Plus, Package } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Wrench, Truck, Plus, Package, Edit3, List } from "lucide-react";
 import { toast } from "sonner";
 import { syncService } from "@/lib/syncService";
 import { db, CachedCustomer, CachedDeviceIdentifier, CachedRepairTicket, RepairStatus, CachedRepairTicketPart, CachedWholesalerIntake, CachedProduct } from "@/lib/db";
@@ -41,7 +42,9 @@ export const RepairTicketDialog = ({
   const [notes, setNotes] = useState("");
 
   // Part & Wholesaler Attachment State (Direct from ticket creation)
+  const [partSourceMode, setPartSourceMode] = useState<'inventory' | 'custom'>('inventory');
   const [attachPartProductId, setAttachPartProductId] = useState<string>("");
+  const [customPartName, setCustomPartName] = useState<string>("");
   const [attachWholesalerId, setAttachWholesalerId] = useState<string>("");
   const [attachPartQty, setAttachPartQty] = useState<string>("1");
   const [attachPartUnitCost, setAttachPartUnitCost] = useState<string>("0");
@@ -191,25 +194,51 @@ export const RepairTicketDialog = ({
         };
         await syncService.queueOperation('repairTicketHistory', 'insert', historyEntry);
 
-        // If a part/product was selected during intake, attach it!
-        if (attachPartProductId) {
-          const selectedProd = products.find(p => p.id === attachPartProductId);
-          const qty = parseInt(attachPartQty) || 1;
-          const cost = parseFloat(attachPartUnitCost) || selectedProd?.cost_price || 0;
-          const price = parseFloat(attachPartUnitPrice) || selectedProd?.retail_price || 0;
+        // Handle Part / Wholesaler Attachment (Inventory OR Custom Part Name)
+        let resolvedProductId = attachPartProductId;
+        let resolvedPartName = "";
+        const qty = parseInt(attachPartQty) || 1;
+        const cost = parseFloat(attachPartUnitCost) || 0;
+        const price = parseFloat(attachPartUnitPrice) || 0;
 
-          // 1. Create Repair Ticket Part
+        if (partSourceMode === 'custom' && customPartName.trim()) {
+          // Auto-create product in catalog for custom part
+          const newProdId = crypto.randomUUID();
+          resolvedPartName = customPartName.trim();
+          const newProduct: CachedProduct = {
+            id: newProdId,
+            user_id: activeUserId,
+            name: resolvedPartName,
+            sku: `PART-${Math.floor(10000 + Math.random() * 90000)}`,
+            cost_price: cost,
+            retail_price: price,
+            stock_quantity: 0,
+            is_repair_part: true,
+            synced: false,
+            lastModified: nowTimestamp,
+            created_at: nowIso,
+            updated_at: nowIso
+          };
+          await syncService.queueOperation('products', 'insert', newProduct);
+          resolvedProductId = newProdId;
+        } else if (attachPartProductId) {
+          const selectedProd = products.find(p => p.id === attachPartProductId);
+          resolvedPartName = selectedProd?.name || "Repair Part";
+        }
+
+        if (resolvedProductId) {
+          // 1. Create Repair Ticket Part record
           const partId = crypto.randomUUID();
           const partRecord: CachedRepairTicketPart = {
             id: partId,
             user_id: activeUserId,
             repair_ticket_id: ticketId,
-            product_id: attachPartProductId,
+            product_id: resolvedProductId,
             quantity: qty,
             unit_cost: cost,
             unit_price: price,
             status: 'reserved',
-            item_type: selectedProd?.is_repair_part ? 'part' : 'product',
+            item_type: 'part',
             wholesaler_id: attachWholesalerId || null,
             synced: false,
             lastModified: nowTimestamp,
@@ -218,19 +247,7 @@ export const RepairTicketDialog = ({
           };
           await syncService.queueOperation('repairTicketParts', 'insert', partRecord);
 
-          // 2. If stock exists, decrement
-          if (selectedProd) {
-            const updatedProd: CachedProduct = {
-              ...selectedProd,
-              stock_quantity: Math.max(0, selectedProd.stock_quantity - qty),
-              lastModified: nowTimestamp,
-              synced: false,
-              updated_at: nowIso
-            };
-            await syncService.queueOperation('products', 'update', updatedProd);
-          }
-
-          // 3. IF A WHOLESALER WAS SELECTED, UPDATE WHOLESALER SCREEN (CONSIGNMENT INTAKE)
+          // 2. IF A WHOLESALER WAS SELECTED, RECORD CONSIGNMENT INTAKE TO WHOLESALER SCREEN
           if (attachWholesalerId) {
             const wholesaler = wholesalers.find(w => w.id === attachWholesalerId);
             const intakeId = crypto.randomUUID();
@@ -240,8 +257,8 @@ export const RepairTicketDialog = ({
               id: intakeId,
               user_id: activeUserId,
               wholesaler_id: attachWholesalerId,
-              product_id: attachPartProductId,
-              item_name: selectedProd ? `${selectedProd.name} (For Ticket ${ticketNumber})` : `Part for Ticket ${ticketNumber}`,
+              product_id: resolvedProductId,
+              item_name: `${resolvedPartName} (Ticket ${ticketNumber})`,
               quantity: qty,
               agreed_unit_cost: cost,
               total_cost: totalCost,
@@ -256,7 +273,7 @@ export const RepairTicketDialog = ({
             };
 
             await syncService.queueOperation('wholesalerIntakes', 'insert', intakeRecord);
-            toast.success(`Consignment entry added to Wholesaler screen (${wholesaler?.name || 'Wholesaler'})`);
+            toast.success(`Consignment entry recorded for ${wholesaler?.name || 'Wholesaler'} screen`);
           }
         }
 
@@ -283,7 +300,9 @@ export const RepairTicketDialog = ({
     setStatus("received");
     setNotes("");
 
+    setPartSourceMode("inventory");
     setAttachPartProductId("");
+    setCustomPartName("");
     setAttachWholesalerId("");
     setAttachPartQty("1");
     setAttachPartUnitCost("0");
@@ -376,32 +395,53 @@ export const RepairTicketDialog = ({
             />
           </div>
 
-          {/* ATTACH PART & WHOLESALER SECTION (NEW FEATURE) */}
+          {/* ATTACH PART & WHOLESALER SECTION (INVENTORY OR CUSTOM PART NAME) */}
           {!ticketToEdit && (
             <div className="p-3 bg-muted/30 rounded-lg border space-y-2.5">
               <div className="flex items-center justify-between">
                 <Label className="text-xs font-semibold text-primary uppercase tracking-wider flex items-center gap-1.5">
                   <Package className="h-3.5 w-3.5" /> Attach Repair Part / Wholesaler (Optional)
                 </Label>
-                <span className="text-[10px] text-muted-foreground">Auto-updates Wholesaler Screen</span>
+                <Tabs value={partSourceMode} onValueChange={(v: any) => setPartSourceMode(v)} className="h-6">
+                  <TabsList className="h-6 p-0.5 text-[10px]">
+                    <TabsTrigger value="inventory" className="text-[10px] h-5 px-2 flex items-center gap-1">
+                      <List className="h-3 w-3" /> Inventory
+                    </TabsTrigger>
+                    <TabsTrigger value="custom" className="text-[10px] h-5 px-2 flex items-center gap-1">
+                      <Edit3 className="h-3 w-3" /> Custom Part
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label className="text-[11px]">Select Part / Product</Label>
-                  <Select value={attachPartProductId} onValueChange={handleProductSelection}>
-                    <SelectTrigger className="h-8 text-xs">
-                      <SelectValue placeholder="Choose inventory part..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {products.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          {p.name} ({formatCurrency(p.retail_price)}) — Stock: {p.stock_quantity}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                {partSourceMode === 'inventory' ? (
+                  <div className="space-y-1">
+                    <Label className="text-[11px]">Select Inventory Part</Label>
+                    <Select value={attachPartProductId} onValueChange={handleProductSelection}>
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Choose inventory part..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {products.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.name} ({formatCurrency(p.retail_price)}) — Stock: {p.stock_quantity}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <Label className="text-[11px]">Write Custom Part Name *</Label>
+                    <Input
+                      placeholder="e.g. iPhone 13 OLED Screen"
+                      className="h-8 text-xs"
+                      value={customPartName}
+                      onChange={(e) => setCustomPartName(e.target.value)}
+                    />
+                  </div>
+                )}
 
                 <div className="space-y-1">
                   <Label className="text-[11px] flex items-center gap-1">
@@ -409,7 +449,7 @@ export const RepairTicketDialog = ({
                   </Label>
                   <Select value={attachWholesalerId} onValueChange={setAttachWholesalerId}>
                     <SelectTrigger className="h-8 text-xs">
-                      <SelectValue placeholder="Taken from Wholesaler?" />
+                      <SelectValue placeholder="Select Wholesaler..." />
                     </SelectTrigger>
                     <SelectContent>
                       {wholesalers.map((w) => (
@@ -422,7 +462,7 @@ export const RepairTicketDialog = ({
                 </div>
               </div>
 
-              {attachPartProductId && (
+              {(attachPartProductId || customPartName.trim()) && (
                 <div className="grid grid-cols-3 gap-2 pt-1">
                   <div className="space-y-1">
                     <Label className="text-[10px]">Qty</Label>
@@ -434,7 +474,18 @@ export const RepairTicketDialog = ({
                   </div>
                   <div className="space-y-1">
                     <Label className="text-[10px]">Part Retail Price</Label>
-                    <Input type="number" step="0.01" className="h-7 text-xs font-semibold" value={attachPartUnitPrice} onChange={(e) => setAttachPartUnitPrice(e.target.value)} />
+                    <Input
+                      type="number"
+                      step="0.01"
+                      className="h-7 text-xs font-semibold"
+                      value={attachPartUnitPrice}
+                      onChange={(e) => {
+                        setAttachPartUnitPrice(e.target.value);
+                        if (!estimatedCost || parseFloat(estimatedCost) === 0) {
+                          setEstimatedCost(e.target.value);
+                        }
+                      }}
+                    />
                   </div>
                 </div>
               )}
