@@ -53,7 +53,10 @@ export const RepairTicketDialog = ({
 
   // Add-on State (e.g., Tempered Glass, Protector)
   const [addonName, setAddonName] = useState<string>("");
-  const [addonPrice, setAddonPrice] = useState<string>(""); // e.g. 200
+  const [addonPrice, setAddonPrice] = useState<string>(""); // Customer Charge e.g. 200
+  const [addonSourceMode, setAddonSourceMode] = useState<'shop' | 'wholesaler'>('wholesaler');
+  const [addonWholesalerId, setAddonWholesalerId] = useState<string>("");
+  const [addonUnitCost, setAddonUnitCost] = useState<string>(""); // Wholesaler cost e.g. 100
 
   const products = useLiveQuery(() => db.products.toArray()) || [];
   const wholesalers = useLiveQuery(() => db.wholesalers.toArray()) || [];
@@ -278,13 +281,16 @@ export const RepairTicketDialog = ({
 
         // 2. HANDLE ADD-ON (e.g. Tempered Glass, Protector)
         if (addonName.trim() && addonPriceNum > 0) {
+          const glassCostNum = parseFloat(addonUnitCost) || 0;
+          const targetWholesalerId = addonSourceMode === 'wholesaler' ? (addonWholesalerId || attachWholesalerId || null) : null;
+
           const addonProdId = crypto.randomUUID();
           const addonProduct: CachedProduct = {
             id: addonProdId,
             user_id: activeUserId,
             name: addonName.trim(),
             sku: `ADDON-${Math.floor(10000 + Math.random() * 90000)}`,
-            cost_price: 0,
+            cost_price: glassCostNum,
             retail_price: addonPriceNum,
             stock_quantity: 0,
             is_repair_part: false,
@@ -301,17 +307,44 @@ export const RepairTicketDialog = ({
             repair_ticket_id: ticketId,
             product_id: addonProdId,
             quantity: 1,
-            unit_cost: 0,
+            unit_cost: glassCostNum,
             unit_price: addonPriceNum,
             status: 'reserved',
             item_type: 'product',
-            wholesaler_id: null,
+            wholesaler_id: targetWholesalerId,
             synced: false,
             lastModified: nowTimestamp,
             created_at: nowIso,
             updated_at: nowIso
           };
           await syncService.queueOperation('repairTicketParts', 'insert', addonPartRecord);
+
+          // IF SOURCED FROM WHOLESALER, LOG TO WHOLESALER SCREEN
+          if (targetWholesalerId && glassCostNum > 0) {
+            const wholesaler = wholesalers.find(w => w.id === targetWholesalerId);
+            const intakeRecord: CachedWholesalerIntake = {
+              id: crypto.randomUUID(),
+              user_id: activeUserId,
+              wholesaler_id: targetWholesalerId,
+              product_id: addonProdId,
+              item_name: `${addonName.trim()} (Ticket ${ticketNumber})`,
+              quantity: 1,
+              agreed_unit_cost: glassCostNum,
+              total_cost: glassCostNum,
+              amount_paid: 0,
+              intake_date: nowIso,
+              status: 'pending',
+              notes: `Add-on Glass sourced for Repair Ticket ${ticketNumber} (${deviceName.trim()})`,
+              synced: false,
+              lastModified: nowTimestamp,
+              created_at: nowIso,
+              updated_at: nowIso
+            };
+
+            await syncService.queueOperation('wholesalerIntakes', 'insert', intakeRecord);
+            toast.success(`Logged ${formatCurrency(glassCostNum)} Add-on cost to Wholesaler "${wholesaler?.name || 'Wholesaler'}" screen`);
+          }
+
           toast.success(`Add-on "${addonName.trim()}" attached (${formatCurrency(addonPriceNum)})`);
         }
 
@@ -347,6 +380,9 @@ export const RepairTicketDialog = ({
 
     setAddonName("");
     setAddonPrice("");
+    setAddonSourceMode("wholesaler");
+    setAddonWholesalerId("");
+    setAddonUnitCost("");
   };
 
   return (
@@ -528,22 +564,30 @@ export const RepairTicketDialog = ({
 
           {/* 2. ADD-ON ACCESSORIES SECTION (e.g. Tempered Glass) */}
           {!ticketToEdit && (
-            <div className="p-3 bg-muted/20 rounded-lg border space-y-2">
-              <Label className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5 text-blue-600" /> 2. Add-on Accessory (Optional, e.g. Tempered Glass)
-              </Label>
+            <div className="p-3 bg-blue-50/30 dark:bg-blue-950/20 rounded-lg border border-blue-200/50 space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                  <Sparkles className="h-3.5 w-3.5 text-blue-600" /> 2. Add-on Accessory (e.g. Glass / Protector)
+                </Label>
+                {addonName.trim() && (
+                  <Badge variant="outline" className="text-[10px] bg-background text-blue-600 border-blue-300">
+                    Sourced: {addonSourceMode === 'wholesaler' ? 'Wholesaler' : 'Shop Inventory'}
+                  </Badge>
+                )}
+              </div>
+
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <Label className="text-[11px]">Add-on Item Name</Label>
                   <Input
-                    placeholder="e.g. Tempered Glass 9D"
+                    placeholder="e.g. 9D Tempered Glass"
                     className="h-8 text-xs"
                     value={addonName}
                     onChange={(e) => setAddonName(e.target.value)}
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-[11px]">Add-on Price (e.g. 200)</Label>
+                  <Label className="text-[11px]">Customer Charge Price (e.g. 200)</Label>
                   <Input
                     type="number"
                     step="0.01"
@@ -554,6 +598,52 @@ export const RepairTicketDialog = ({
                   />
                 </div>
               </div>
+
+              {addonName.trim().length > 0 && (
+                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-blue-200/40">
+                  <div className="space-y-1">
+                    <Label className="text-[10px] font-medium">Sourced From</Label>
+                    <Select value={addonSourceMode} onValueChange={(val: any) => setAddonSourceMode(val)}>
+                      <SelectTrigger className="h-7 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="wholesaler">Wholesaler Supplier</SelectItem>
+                        <SelectItem value="shop">Shop / Screen Stock</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {addonSourceMode === 'wholesaler' ? (
+                    <div className="space-y-1 col-span-2">
+                      <Label className="text-[10px] font-medium">Wholesaler Supplier for Glass</Label>
+                      <Select value={addonWholesalerId} onValueChange={setAddonWholesalerId}>
+                        <SelectTrigger className="h-7 text-xs font-medium border-amber-300">
+                          <SelectValue placeholder="Use Main Ticket Wholesaler" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">Use Main Ticket Wholesaler</SelectItem>
+                          {wholesalers.map(w => (
+                            <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : (
+                    <div className="space-y-1 col-span-2">
+                      <Label className="text-[10px] font-medium">Cost Price for Glass (Optional)</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        placeholder="e.g. 100"
+                        className="h-7 text-xs"
+                        value={addonUnitCost}
+                        onChange={(e) => setAddonUnitCost(e.target.value)}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
