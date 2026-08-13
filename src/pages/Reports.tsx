@@ -11,13 +11,15 @@ import { Badge } from "@/components/ui/badge";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CalendarIcon, Download, Eye, FileSpreadsheet } from "lucide-react";
-import * as XLSX from 'xlsx';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { CalendarIcon, Eye, FileSpreadsheet, Wrench, Truck, RotateCcw, ShoppingBag, DollarSign, TrendingUp } from "lucide-react";
 import ExcelJS from 'exceljs';
 import { format, startOfMonth, endOfMonth } from "date-fns";
 import { toast } from "sonner";
 import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell, Legend } from "recharts";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { db } from "@/lib/db";
+import { useLiveQuery } from "dexie-react-hooks";
 
 interface Sale {
   id: string;
@@ -31,8 +33,8 @@ interface Sale {
     product_name: string;
     quantity: number;
     unit_price: number;
-    subtotal?: number; // Optional, might be missing
-    total_price?: number; // Added total_price
+    subtotal?: number;
+    total_price?: number;
   }>;
   products?: {
     cost_price: number;
@@ -47,8 +49,20 @@ const Reports = () => {
   const [endDate, setEndDate] = useState<Date | undefined>(endOfMonth(new Date()));
   const formatPrice = useFormatCurrency();
   const [paymentFilter, setPaymentFilter] = useState("all");
+  const [reportTab, setReportTab] = useState("overview");
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+
+  // Live queries for Repairs, Wholesalers, and Refunds
+  const repairTickets = useLiveQuery(() => db.repairTickets.toArray()) || [];
+  const repairParts = useLiveQuery(() => db.repairTicketParts.toArray()) || [];
+  const wholesalers = useLiveQuery(() => db.wholesalers.toArray()) || [];
+  const wholesalerIntakes = useLiveQuery(() => db.wholesalerIntakes.toArray()) || [];
+  const refunds = useLiveQuery(() => db.refunds.toArray()) || [];
+  const customers = useLiveQuery(() => db.customers.toArray()) || [];
+
+  const customerMap = new Map(customers.map(c => [c.id, c.name]));
+  const wholesalerMap = new Map(wholesalers.map(w => [w.id, w.name]));
 
   useEffect(() => {
     checkAuth();
@@ -71,20 +85,20 @@ const Reports = () => {
       const { data, error } = await supabase
         .from("sales")
         .select(`
-  *,
-  customers(name),
-  sale_items(
-    product_name,
-    quantity,
-    unit_price,
-    subtotal
-  )
-    `)
+          *,
+          customers(name),
+          sale_items(
+            product_name,
+            quantity,
+            unit_price,
+            subtotal
+          )
+        `)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
       setSales((data as any) || []);
-    } catch (error: any) {
+    } catch {
       toast.error("Error loading sales");
     }
   };
@@ -111,6 +125,42 @@ const Reports = () => {
     setFilteredSales(filtered);
   };
 
+  // Date Filtered Repair Tickets, Intakes & Refunds
+  const filteredRepairs = repairTickets.filter(t => {
+    const d = new Date(t.created_at || Date.now());
+    if (startDate && d < new Date(startDate.setHours(0,0,0,0))) return false;
+    if (endDate && d > new Date(endDate.setHours(23,59,59,999))) return false;
+    return true;
+  });
+
+  const filteredIntakes = wholesalerIntakes.filter(i => {
+    const d = new Date(i.intake_date || i.created_at || Date.now());
+    if (startDate && d < new Date(startDate.setHours(0,0,0,0))) return false;
+    if (endDate && d > new Date(endDate.setHours(23,59,59,999))) return false;
+    return true;
+  });
+
+  const filteredRefunds = refunds.filter(r => {
+    const d = new Date(r.created_at || Date.now());
+    if (startDate && d < new Date(startDate.setHours(0,0,0,0))) return false;
+    if (endDate && d > new Date(endDate.setHours(23,59,59,999))) return false;
+    return true;
+  });
+
+  // Comprehensive Financial Totals
+  const totalSalesRevenue = filteredSales.reduce((sum, sale) => sum + Number(sale.total_amount || 0), 0);
+  const totalRepairRevenue = filteredRepairs.reduce((sum, t) => sum + (t.estimated_cost || 0), 0);
+  const totalWholesalerCost = filteredIntakes.reduce((sum, i) => sum + (i.total_cost || 0), 0);
+  const totalRefundsAmount = filteredRefunds.reduce((sum, r) => sum + (r.amount || 0), 0);
+
+  // Estimated POS Sales Cost (Assuming 60% cost / 40% margin for products)
+  const totalSalesCost = filteredSales.reduce((sum, sale) => sum + Number(sale.subtotal || 0) * 0.6, 0);
+  const posSalesProfit = totalSalesRevenue - totalSalesCost;
+  const repairProfit = totalRepairRevenue - totalWholesalerCost;
+
+  // Combined Grand Net Profit
+  const combinedNetProfit = posSalesProfit + repairProfit - totalRefundsAmount;
+
   const viewDetails = (sale: Sale) => {
     setSelectedSale(sale);
     setDetailsOpen(true);
@@ -118,356 +168,13 @@ const Reports = () => {
 
   const exportToExcel = async () => {
     try {
-      toast.loading("Generating styled executive report with charts...");
+      toast.loading("Generating comprehensive multi-sheet executive report...");
 
-      // Fetch products for cost mapping
-      const { data: products } = await supabase
-        .from("products")
-        .select("id, name, cost_price, retail_price");
-
-      const productCostMap = new Map(
-        products?.map(p => [p.name.toLowerCase().trim(), { cost: Number(p.cost_price || 0), retail: Number(p.retail_price || 0) }]) || []
-      );
-
-      // Calculations & Aggregations
-      const dailyMap = new Map<string, { revenue: number; profit: number; transactions: number; itemsSold: number }>();
-      const productStatsMap = new Map<string, { revenue: number; profit: number; quantity: number }>();
-      const paymentMap = new Map<string, { count: number; total: number }>();
-      const itemizedData: any[][] = [];
-
-      let totalRev = 0;
-      let totalCst = 0;
-      let totalUnitsSold = 0;
-      let todayRev = 0;
-      let todayProfit = 0;
-      const todayStr = format(new Date(), "yyyy-MM-dd");
-
-      filteredSales.forEach(sale => {
-        const dateStr = format(new Date(sale.created_at), "yyyy-MM-dd");
-        const dateTimeStr = format(new Date(sale.created_at), "yyyy-MM-dd HH:mm");
-        const isToday = dateStr === todayStr;
-        const customerName = sale.customers?.name || "Walk-in Customer";
-        const paymentMethod = (sale.payment_method || "cash").toUpperCase();
-
-        const pPay = paymentMap.get(paymentMethod) || { count: 0, total: 0 };
-        pPay.count += 1;
-        pPay.total += Number(sale.total_amount || 0);
-        paymentMap.set(paymentMethod, pPay);
-
-        let saleCost = 0;
-        let saleItemsCount = 0;
-
-        sale.sale_items?.forEach(item => {
-          const prodName = item.product_name || "Unknown Product";
-          const qty = Number(item.quantity || 1);
-          const unitPrice = Number(item.unit_price || 0);
-          const itemRevenue = Number(item.subtotal || item.total_price || (unitPrice * qty));
-
-          const costInfo = productCostMap.get(prodName.toLowerCase().trim());
-          const unitCost = costInfo ? costInfo.cost : unitPrice * 0.6;
-          const itemCost = unitCost * qty;
-          const itemProfit = itemRevenue - itemCost;
-
-          saleCost += itemCost;
-          saleItemsCount += qty;
-          totalUnitsSold += qty;
-
-          const pStats = productStatsMap.get(prodName) || { revenue: 0, profit: 0, quantity: 0 };
-          pStats.revenue += itemRevenue;
-          pStats.profit += itemProfit;
-          pStats.quantity += qty;
-          productStatsMap.set(prodName, pStats);
-
-          itemizedData.push([
-            sale.receipt_number,
-            dateTimeStr,
-            customerName,
-            prodName,
-            qty,
-            Number(unitPrice.toFixed(2)),
-            Number(itemRevenue.toFixed(2)),
-            Number(unitCost.toFixed(2)),
-            Number(itemProfit.toFixed(2)),
-            paymentMethod
-          ]);
-        });
-
-        const saleRevenue = Number(sale.total_amount || 0);
-        const saleProfit = saleRevenue - saleCost;
-
-        totalRev += saleRevenue;
-        totalCst += saleCost;
-
-        if (isToday) {
-          todayRev += saleRevenue;
-          todayProfit += saleProfit;
-        }
-
-        const dStats = dailyMap.get(dateStr) || { revenue: 0, profit: 0, transactions: 0, itemsSold: 0 };
-        dStats.revenue += saleRevenue;
-        dStats.profit += saleProfit;
-        dStats.transactions += 1;
-        dStats.itemsSold += saleItemsCount;
-        dailyMap.set(dateStr, dStats);
-      });
-
-      const totalProf = totalRev - totalCst;
-      const profMargin = totalRev > 0 ? (totalProf / totalRev) * 100 : 0;
-      const todayMargin = todayRev > 0 ? (todayProfit / todayRev) * 100 : 0;
-
-      // Initialize ExcelJS Workbook
       const workbook = new ExcelJS.Workbook();
-      workbook.creator = "POS Shopping System";
+      workbook.creator = "POS & Repair System";
       workbook.created = new Date();
 
-      // --- Helper: Generate Visual Canvas Bar Chart Image ---
-      const createChartCanvasPng = (
-        chartTitle: string,
-        labels: string[],
-        series1: { name: string; values: number[]; color: string },
-        series2?: { name: string; values: number[]; color: string }
-      ): string => {
-        const canvas = document.createElement('canvas');
-        canvas.width = 640;
-        canvas.height = 300;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return '';
-
-        // White background
-        ctx.fillStyle = '#FFFFFF';
-        ctx.fillRect(0, 0, 640, 300);
-
-        // Dark Top Header Banner
-        ctx.fillStyle = '#1E293B';
-        ctx.fillRect(0, 0, 640, 38);
-
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = 'bold 13px "Segoe UI", sans-serif';
-        ctx.fillText(chartTitle, 16, 24);
-
-        // Chart Area Bounds
-        const startX = 75;
-        const startY = 250;
-        const chartW = 530;
-        const chartH = 180;
-
-        const maxVal = Math.max(
-          ...series1.values,
-          ...(series2 ? series2.values : [0]),
-          10
-        );
-
-        // Y Gridlines
-        ctx.strokeStyle = '#E2E8F0';
-        ctx.lineWidth = 1;
-        for (let i = 0; i <= 4; i++) {
-          const y = startY - (chartH / 4) * i;
-          ctx.beginPath();
-          ctx.moveTo(startX, y);
-          ctx.lineTo(startX + chartW, y);
-          ctx.stroke();
-
-          const valLabel = Math.round((maxVal / 4) * i);
-          ctx.fillStyle = '#64748B';
-          ctx.font = '10px "Segoe UI", sans-serif';
-          ctx.textAlign = 'right';
-          ctx.fillText(`PKR ${valLabel}`, startX - 8, y + 3);
-        }
-
-        // Legend Right Side of Banner
-        let legX = 390;
-        ctx.fillStyle = series1.color;
-        ctx.fillRect(legX, 12, 12, 12);
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = 'bold 11px "Segoe UI", sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText(series1.name, legX + 16, 22);
-
-        if (series2) {
-          legX += 110;
-          ctx.fillStyle = series2.color;
-          ctx.fillRect(legX, 12, 12, 12);
-          ctx.fillStyle = '#FFFFFF';
-          ctx.fillText(series2.name, legX + 16, 22);
-        }
-
-        // Bars
-        const numGroups = Math.max(labels.length, 1);
-        const groupW = chartW / numGroups;
-        const barW = series2 ? Math.min(groupW / 2.6, 22) : Math.min(groupW / 1.5, 34);
-
-        labels.forEach((label, i) => {
-          const groupX = startX + i * groupW + groupW / 8;
-
-          // Series 1
-          const v1 = series1.values[i] || 0;
-          const h1 = (v1 / maxVal) * chartH;
-          ctx.fillStyle = series1.color;
-          ctx.fillRect(groupX, startY - h1, barW, h1);
-
-          // Series 2
-          if (series2) {
-            const v2 = series2.values[i] || 0;
-            const h2 = (v2 / maxVal) * chartH;
-            ctx.fillStyle = series2.color;
-            ctx.fillRect(groupX + barW + 3, startY - h2, barW, h2);
-          }
-
-          // Label
-          ctx.fillStyle = '#475569';
-          ctx.font = '10px "Segoe UI", sans-serif';
-          ctx.textAlign = 'center';
-          const shortLabel = label.length > 10 ? label.substring(0, 8) + '..' : label;
-          ctx.fillText(shortLabel, groupX + (series2 ? barW : barW / 2), startY + 16);
-        });
-
-        return canvas.toDataURL('image/png');
-      };
-
-      // Generate Chart PNGs
-      const sortedDaily = Array.from(dailyMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-      const dailyChartPng = createChartCanvasPng(
-        "DAILY REVENUE VS NET PROFIT TREND (PKR)",
-        sortedDaily.map(d => d[0]),
-        { name: "Revenue", values: sortedDaily.map(d => d[1].revenue), color: "#2563EB" },
-        { name: "Net Profit", values: sortedDaily.map(d => d[1].profit), color: "#059669" }
-      );
-
-      const topProducts = Array.from(productStatsMap.entries()).sort((a, b) => b[1].revenue - a[1].revenue).slice(0, 7);
-      const productChartPng = createChartCanvasPng(
-        "TOP REVENUE PRODUCTS (PKR)",
-        topProducts.map(p => p[0]),
-        { name: "Revenue", values: topProducts.map(p => p[1].revenue), color: "#3B82F6" },
-        { name: "Profit", values: topProducts.map(p => p[1].profit), color: "#10B981" }
-      );
-
-      // --- SHEET 1: EXECUTIVE SUMMARY ---
-      const summaryWs = workbook.addWorksheet("Executive Summary", { views: [{ showGridLines: true }] });
-
-      // Title Banner
-      const titleR = summaryWs.addRow(["POS RETAIL SALES EXECUTIVE DASHBOARD"]);
-      summaryWs.mergeCells(1, 1, 1, 6);
-      titleR.height = 36;
-      const tCell = titleR.getCell(1);
-      tCell.font = { name: 'Segoe UI', size: 15, bold: true, color: { argb: 'FFFFFFFF' } };
-      tCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
-      tCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-
-      summaryWs.addRow([`Report Generated: ${format(new Date(), "yyyy-MM-dd HH:mm:ss")}`]);
-      summaryWs.addRow([`Date Filter: ${startDate ? format(startDate, "yyyy-MM-dd") : "All Time"} to ${endDate ? format(endDate, "yyyy-MM-dd") : "All Time"}`]);
-      summaryWs.addRow([]);
-
-      // Section 1: Financial Overview
-      const sec1 = summaryWs.addRow(["FINANCIAL PERFORMANCE OVERVIEW"]);
-      summaryWs.mergeCells(5, 1, 5, 2);
-      sec1.height = 26;
-      sec1.getCell(1).font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
-      sec1.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
-      sec1.getCell(1).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-
-      const kpiH = summaryWs.addRow(["Performance Metric", "Value"]);
-      kpiH.height = 24;
-      [1, 2].forEach(col => {
-        const cell = kpiH.getCell(col);
-        cell.font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
-        cell.alignment = { vertical: 'middle', horizontal: col === 1 ? 'left' : 'right' };
-      });
-
-      const kpis: [string, number, 'currency' | 'percent' | 'number'][] = [
-        ["Total Sales Revenue (PKR)", Number(totalRev.toFixed(2)), 'currency'],
-        ["Total Estimated Cost (PKR)", Number(totalCst.toFixed(2)), 'currency'],
-        ["Total Net Profit (PKR)", Number(totalProf.toFixed(2)), 'currency'],
-        ["Overall Gross Margin", profMargin / 100, 'percent'],
-        ["Total Completed Orders", filteredSales.length, 'number'],
-        ["Total Item Units Sold", totalUnitsSold, 'number'],
-        ["Average Order Value (PKR)", filteredSales.length > 0 ? totalRev / filteredSales.length : 0, 'currency']
-      ];
-
-      kpis.forEach(([metric, val, type], idx) => {
-        const row = summaryWs.addRow([metric, val]);
-        row.height = 22;
-        const bg = idx % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC';
-
-        const c1 = row.getCell(1);
-        c1.font = { name: 'Segoe UI', size: 10.5, bold: true, color: { argb: 'FF0F172A' } };
-        c1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
-        c1.alignment = { vertical: 'middle', horizontal: 'left' };
-        c1.border = { top: { style: 'thin', color: { argb: 'FFE2E8F0' } }, bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } }, left: { style: 'thin', color: { argb: 'FFE2E8F0' } }, right: { style: 'thin', color: { argb: 'FFE2E8F0' } } };
-
-        const c2 = row.getCell(2);
-        c2.font = { name: 'Segoe UI', size: 10.5, bold: true, color: { argb: 'FF0F172A' } };
-        c2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
-        c2.alignment = { vertical: 'middle', horizontal: 'right' };
-        c2.border = { top: { style: 'thin', color: { argb: 'FFE2E8F0' } }, bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } }, left: { style: 'thin', color: { argb: 'FFE2E8F0' } }, right: { style: 'thin', color: { argb: 'FFE2E8F0' } } };
-
-        if (type === 'currency') c2.numFmt = '"PKR "#,##0.00';
-        if (type === 'percent') c2.numFmt = '0.00%';
-        if (type === 'number') c2.numFmt = '#,##0';
-      });
-
-      // Section 2: Today's Snapshot
-      summaryWs.addRow([]);
-      const sec2 = summaryWs.addRow(["TODAY'S PERFORMANCE SNAPSHOT"]);
-      summaryWs.mergeCells(15, 1, 15, 2);
-      sec2.height = 26;
-      sec2.getCell(1).font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
-      sec2.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
-      sec2.getCell(1).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-
-      const todayKpis: [string, number, 'currency' | 'percent'][] = [
-        ["Today's Revenue (PKR)", Number(todayRev.toFixed(2)), 'currency'],
-        ["Today's Net Profit (PKR)", Number(todayProfit.toFixed(2)), 'currency'],
-        ["Today's Profit Margin", todayMargin / 100, 'percent']
-      ];
-
-      todayKpis.forEach(([metric, val, type], idx) => {
-        const row = summaryWs.addRow([metric, val]);
-        row.height = 22;
-        const bg = idx % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC';
-
-        const c1 = row.getCell(1);
-        c1.font = { name: 'Segoe UI', size: 10.5, bold: true, color: { argb: 'FF0F172A' } };
-        c1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
-        c1.border = { top: { style: 'thin', color: { argb: 'FFE2E8F0' } }, bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } }, left: { style: 'thin', color: { argb: 'FFE2E8F0' } }, right: { style: 'thin', color: { argb: 'FFE2E8F0' } } };
-
-        const c2 = row.getCell(2);
-        c2.font = { name: 'Segoe UI', size: 10.5, bold: true, color: { argb: 'FF0F172A' } };
-        c2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
-        c2.border = { top: { style: 'thin', color: { argb: 'FFE2E8F0' } }, bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } }, left: { style: 'thin', color: { argb: 'FFE2E8F0' } }, right: { style: 'thin', color: { argb: 'FFE2E8F0' } } };
-
-        if (type === 'currency') c2.numFmt = '"PKR "#,##0.00';
-        if (type === 'percent') c2.numFmt = '0.00%';
-      });
-
-      // Embed Visual Charts into Executive Summary
-      if (dailyChartPng) {
-        const dailyChartId = workbook.addImage({ base64: dailyChartPng, extension: 'png' });
-        summaryWs.addImage(dailyChartId, {
-          tl: { col: 3, row: 4 },
-          ext: { width: 520, height: 260 }
-        });
-      }
-
-      if (productChartPng) {
-        const productChartId = workbook.addImage({ base64: productChartPng, extension: 'png' });
-        summaryWs.addImage(productChartId, {
-          tl: { col: 3, row: 18 },
-          ext: { width: 520, height: 250 }
-        });
-      }
-
-      // Auto-fit summary columns
-      summaryWs.columns.forEach((column) => {
-        let maxLen = 12;
-        column.eachCell!({ includeEmpty: false }, (cell) => {
-          const str = cell.value ? String(cell.value) : '';
-          if (str.length > maxLen) maxLen = str.length;
-        });
-        column.width = Math.min(maxLen + 4, 45);
-      });
-
-      // --- Helper: Build Full Styled Worksheet ---
+      // --- Helper: Build Styled Sheet ---
       const buildStyledSheet = (
         sheetTitleName: string,
         bannerTitleText: string,
@@ -480,14 +187,13 @@ const Reports = () => {
 
         // Row 1: Banner Title
         const titleRow = ws.addRow([bannerTitleText]);
-        ws.mergeCells(1, 1, 1, headerTitles.length);
+        ws.mergeCells(1, 1, 1, Math.max(headerTitles.length, 1));
         titleRow.height = 34;
         const tCell = titleRow.getCell(1);
         tCell.font = { name: 'Segoe UI', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
         tCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
         tCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
 
-        // Row 2: Empty
         ws.addRow([]);
 
         // Row 3: Headers
@@ -497,12 +203,6 @@ const Reports = () => {
           cell.font = { name: 'Segoe UI', size: 10.5, bold: true, color: { argb: 'FFFFFFFF' } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
           cell.alignment = { vertical: 'middle', horizontal: colTypes[colNum - 1] === 'text' ? 'left' : 'right' };
-          cell.border = {
-            top: { style: 'medium', color: { argb: 'FF0F172A' } },
-            bottom: { style: 'medium', color: { argb: 'FF0F172A' } },
-            left: { style: 'thin', color: { argb: 'FF334155' } },
-            right: { style: 'thin', color: { argb: 'FF334155' } }
-          };
         });
 
         // Data Rows
@@ -515,18 +215,9 @@ const Reports = () => {
             const type = colTypes[colNum - 1] || 'text';
             cell.font = { name: 'Segoe UI', size: 10, color: { argb: 'FF0F172A' } };
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
-            cell.border = {
-              top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-              bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-              left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-              right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
-            };
 
             if (type === 'currency') {
               cell.numFmt = '"PKR "#,##0.00';
-              cell.alignment = { vertical: 'middle', horizontal: 'right' };
-            } else if (type === 'percent') {
-              cell.numFmt = '0.00%';
               cell.alignment = { vertical: 'middle', horizontal: 'right' };
             } else if (type === 'number') {
               cell.numFmt = '#,##0';
@@ -537,7 +228,6 @@ const Reports = () => {
           });
         });
 
-        // Totals Row
         if (totalRowValues) {
           const totRow = ws.addRow(totalRowValues);
           totRow.height = 25;
@@ -545,214 +235,152 @@ const Reports = () => {
             const type = colTypes[colNum - 1] || 'text';
             cell.font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: 'FF0F172A' } };
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
-            cell.border = {
-              top: { style: 'thin', color: { argb: 'FF0F172A' } },
-              bottom: { style: 'double', color: { argb: 'FF0F172A' } },
-              left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-              right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
-            };
-
-            if (type === 'currency') {
-              cell.numFmt = '"PKR "#,##0.00';
-              cell.alignment = { vertical: 'middle', horizontal: 'right' };
-            } else if (type === 'percent') {
-              cell.numFmt = '0.00%';
-              cell.alignment = { vertical: 'middle', horizontal: 'right' };
-            } else if (type === 'number') {
-              cell.numFmt = '#,##0';
-              cell.alignment = { vertical: 'middle', horizontal: 'right' };
-            } else {
-              cell.alignment = { vertical: 'middle', horizontal: 'left' };
-            }
+            if (type === 'currency') cell.numFmt = '"PKR "#,##0.00';
           });
         }
 
-        // Auto-fit Columns
         ws.columns.forEach((column) => {
           let maxLen = 12;
           column.eachCell!({ includeEmpty: false }, (cell) => {
             const str = cell.value ? String(cell.value) : '';
             if (str.length > maxLen) maxLen = str.length;
           });
-          column.width = Math.min(maxLen + 4, 55);
+          column.width = Math.min(maxLen + 4, 50);
         });
-
-        return ws;
       };
 
-      // --- SHEET 2: ITEMIZED SALES DETAIL ---
-      const itemizedTotals = ["TOTALS", "", "", "", totalUnitsSold, "", Number(totalRev.toFixed(2)), Number(totalCst.toFixed(2)), Number(totalProf.toFixed(2)), ""];
-      buildStyledSheet(
-        "Itemized Sales Detail",
-        "ITEMIZED PRODUCT SALES TRANSACTION DETAIL",
-        ["Receipt #", "Date & Time", "Customer Name", "Product Name", "Quantity Sold", "Unit Price (PKR)", "Item Revenue (PKR)", "Est. Unit Cost (PKR)", "Est. Net Profit (PKR)", "Payment Method"],
-        itemizedData,
-        ['text', 'text', 'text', 'text', 'number', 'currency', 'currency', 'currency', 'currency', 'text'],
-        itemizedTotals
-      );
+      // 1. EXECUTIVE SUMMARY SHEET
+      const summaryWs = workbook.addWorksheet("Executive Summary");
+      summaryWs.addRow(["COMPREHENSIVE POS & REPAIR FINANCIAL SUMMARY"]);
+      summaryWs.mergeCells(1, 1, 1, 3);
+      summaryWs.addRow([`Generated: ${format(new Date(), "yyyy-MM-dd HH:mm")}`]);
+      summaryWs.addRow([]);
 
-      // --- SHEET 3: PRODUCT PERFORMANCE ---
-      const productRows: any[][] = [];
-      Array.from(productStatsMap.entries())
-        .sort((a, b) => b[1].revenue - a[1].revenue)
-        .forEach(([name, stats]) => {
-          const avgPrice = stats.quantity > 0 ? stats.revenue / stats.quantity : 0;
-          const cost = stats.revenue - stats.profit;
-          const margin = stats.revenue > 0 ? stats.profit / stats.revenue : 0;
-          productRows.push([
-            name,
-            stats.quantity,
-            Number(avgPrice.toFixed(2)),
-            Number(stats.revenue.toFixed(2)),
-            Number(cost.toFixed(2)),
-            Number(stats.profit.toFixed(2)),
-            margin
-          ]);
-        });
+      const metrics = [
+        ["POS Sales Revenue", totalSalesRevenue, 'currency'],
+        ["Repair Jobs Revenue", totalRepairRevenue, 'currency'],
+        ["Wholesaler Part Expenses", totalWholesalerCost, 'currency'],
+        ["Refunds Processed", totalRefundsAmount, 'currency'],
+        ["Net Combined Profit", combinedNetProfit, 'currency'],
+        ["Total Completed Repair Tickets", filteredRepairs.length, 'number'],
+        ["Total Sales Receipts", filteredSales.length, 'number'],
+      ];
 
-      const prodTotals = ["TOTALS", totalUnitsSold, "", Number(totalRev.toFixed(2)), Number(totalCst.toFixed(2)), Number(totalProf.toFixed(2)), profMargin / 100];
-      buildStyledSheet(
-        "Product Performance",
-        "PRODUCT SALES & PROFITABILITY SUMMARY",
-        ["Product Name", "Units Sold", "Avg Unit Price (PKR)", "Total Revenue (PKR)", "Est. Total Cost (PKR)", "Net Profit (PKR)", "Profit Margin (%)"],
-        productRows,
-        ['text', 'number', 'currency', 'currency', 'currency', 'currency', 'percent'],
-        prodTotals
-      );
-
-      // --- SHEET 4: DAILY TRENDS ---
-      const dailyRows: any[][] = [];
-      sortedDaily.forEach(([date, stats]) => {
-        const cost = stats.revenue - stats.profit;
-        const aov = stats.transactions > 0 ? stats.revenue / stats.transactions : 0;
-        const margin = stats.revenue > 0 ? stats.profit / stats.revenue : 0;
-        dailyRows.push([
-          date,
-          stats.transactions,
-          stats.itemsSold,
-          Number(stats.revenue.toFixed(2)),
-          Number(cost.toFixed(2)),
-          Number(stats.profit.toFixed(2)),
-          Number(aov.toFixed(2)),
-          margin
-        ]);
+      summaryWs.addRow(["Metric", "Value"]);
+      metrics.forEach(([label, val, type]) => {
+        summaryWs.addRow([label, val]);
       });
 
-      const dailyTotals = ["TOTALS", filteredSales.length, totalUnitsSold, Number(totalRev.toFixed(2)), Number(totalCst.toFixed(2)), Number(totalProf.toFixed(2)), Number((filteredSales.length > 0 ? totalRev / filteredSales.length : 0).toFixed(2)), profMargin / 100];
-      buildStyledSheet(
-        "Daily Trends",
-        "DAILY SALES, REVENUE & PROFIT TRENDS",
-        ["Date", "Orders Count", "Units Sold", "Daily Revenue (PKR)", "Est. Daily Cost (PKR)", "Daily Net Profit (PKR)", "Avg Order Value (PKR)", "Profit Margin (%)"],
-        dailyRows,
-        ['text', 'number', 'number', 'currency', 'currency', 'currency', 'currency', 'percent'],
-        dailyTotals
-      );
+      // 2. REPAIR JOBS SHEET
+      const repairDataRows = filteredRepairs.map(t => {
+        const parts = repairParts.filter(p => p.repair_ticket_id === t.id && !['returned', 'broken'].includes(p.status));
+        const partCostSum = parts.reduce((sum, p) => sum + (p.unit_cost * p.quantity), 0);
+        const customerCharge = t.estimated_cost || 0;
+        const profit = customerCharge - partCostSum;
 
-      // --- SHEET 5: ORDER MASTER LIST ---
-      const transactionRows: any[][] = [];
-      filteredSales.forEach(sale => {
-        const itemsCount = sale.sale_items?.reduce((sum, i) => sum + (i.quantity || 1), 0) || 0;
-        transactionRows.push([
-          sale.receipt_number,
-          format(new Date(sale.created_at), "yyyy-MM-dd HH:mm"),
-          sale.customers?.name || "Walk-in Customer",
-          sale.payment_method.toUpperCase(),
-          itemsCount,
-          Number((sale.subtotal || sale.total_amount).toFixed(2)),
-          0.00,
-          0.00,
-          Number(sale.total_amount.toFixed(2))
-        ]);
+        return [
+          t.ticket_number,
+          format(new Date(t.created_at || Date.now()), "yyyy-MM-dd HH:mm"),
+          t.device_name,
+          customerMap.get(t.customer_id || "") || "Walk-in Customer",
+          t.status.toUpperCase(),
+          customerCharge,
+          partCostSum,
+          profit
+        ];
       });
 
-      const orderTotals = ["TOTALS", "", "", "", totalUnitsSold, Number(totalRev.toFixed(2)), 0.00, 0.00, Number(totalRev.toFixed(2))];
       buildStyledSheet(
-        "Order Master List",
-        "ORDER TRANSACTIONS MASTER RECORD",
-        ["Receipt #", "Date & Time", "Customer Name", "Payment Method", "Items Count", "Subtotal (PKR)", "Discount (PKR)", "Tax (PKR)", "Total Amount (PKR)"],
-        transactionRows,
-        ['text', 'text', 'text', 'text', 'number', 'currency', 'currency', 'currency', 'currency'],
-        orderTotals
+        "Repair Jobs Report",
+        "REPAIR TICKETS, PARTS COST & PROFIT RECORD",
+        ["Ticket #", "Date & Time", "Device Name", "Customer", "Status", "Customer Charge (PKR)", "Wholesaler Part Cost (PKR)", "Net Repair Profit (PKR)"],
+        repairDataRows,
+        ['text', 'text', 'text', 'text', 'text', 'currency', 'currency', 'currency'],
+        ["TOTALS", "", "", "", "", totalRepairRevenue, totalWholesalerCost, repairProfit]
       );
 
-      // Download file using ExcelJS Buffer
+      // 3. WHOLESALER CONSIGNMENT SHEET
+      const intakeDataRows = filteredIntakes.map(i => [
+        wholesalerMap.get(i.wholesaler_id) || "Unknown Supplier",
+        format(new Date(i.intake_date || i.created_at || Date.now()), "yyyy-MM-dd"),
+        i.item_name,
+        i.quantity,
+        i.agreed_unit_cost,
+        i.total_cost,
+        i.amount_paid,
+        i.total_cost - i.amount_paid,
+        i.status.toUpperCase()
+      ]);
+
+      buildStyledSheet(
+        "Wholesaler Consignment",
+        "WHOLESALER INTAKES & SUPPLIER CREDIT RECORD",
+        ["Wholesaler Name", "Date", "Item Name", "Qty", "Agreed Cost (PKR)", "Total Cost (PKR)", "Amount Paid (PKR)", "Remaining Owed (PKR)", "Status"],
+        intakeDataRows,
+        ['text', 'text', 'text', 'number', 'currency', 'currency', 'currency', 'currency', 'text']
+      );
+
+      // 4. REFUNDS LOG SHEET
+      const refundDataRows = filteredRefunds.map(r => [
+        r.refund_number,
+        format(new Date(r.created_at || Date.now()), "yyyy-MM-dd HH:mm"),
+        r.refund_type.toUpperCase(),
+        r.amount,
+        r.payment_method.toUpperCase(),
+        r.reason
+      ]);
+
+      buildStyledSheet(
+        "Refunds Audit Log",
+        "PROCESSED REFUNDS AUDIT TRAIL",
+        ["Refund #", "Date & Time", "Type", "Amount (PKR)", "Payment Method", "Reason"],
+        refundDataRows,
+        ['text', 'text', 'text', 'currency', 'text', 'text']
+      );
+
+      // Download Buffer
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const downloadUrl = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = downloadUrl;
-      link.download = `POS_Sales_Report_${format(new Date(), "yyyy-MM-dd_HHmm")}.xlsx`;
+      link.download = `Full_Sales_and_Repair_Report_${format(new Date(), "yyyy-MM-dd_HHmm")}.xlsx`;
       link.click();
       window.URL.revokeObjectURL(downloadUrl);
 
       toast.dismiss();
-      toast.success("Executive Styled Excel Report Downloaded (PKR)!");
+      toast.success("Comprehensive Sales & Repair Excel Report Downloaded!");
     } catch (error) {
       console.error("Export error:", error);
       toast.error("Failed to export report");
     }
   };
 
-  const formatCurrency = (amount: number) => {
-    return formatPrice(amount);
-  };
-
-  const totalRevenue = filteredSales.reduce((sum, sale) => sum + Number(sale.total_amount), 0);
-  const totalTransactions = filteredSales.length;
-  const averageTransaction = totalTransactions > 0 ? totalRevenue / totalTransactions : 0;
-
-  // Calculate monthly revenue
-  const currentMonth = new Date().getMonth();
-  const currentYear = new Date().getFullYear();
-  const monthlyRevenue = sales
-    .filter((sale) => {
-      const saleDate = new Date(sale.created_at);
-      return saleDate.getMonth() === currentMonth && saleDate.getFullYear() === currentYear;
-    })
-    .reduce((sum, sale) => sum + Number(sale.total_amount), 0);
-
-  // Calculate profit (simplified - would need cost data for accuracy)
-  const totalCost = filteredSales.reduce((sum, sale) => sum + Number(sale.subtotal) * 0.6, 0); // Assuming 40% margin
-  const totalProfit = totalRevenue - totalCost;
-  const profitMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
-
-  // Prepare data for Sales Trend Chart (Last 7 days)
   const salesTrendData = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() - (6 - i));
     const dateStr = format(d, 'MMM dd');
 
-    const dayRevenue = filteredSales
+    const daySales = filteredSales
       .filter(sale => format(new Date(sale.created_at), 'MMM dd') === dateStr)
       .reduce((sum, sale) => sum + Number(sale.total_amount), 0);
 
-    return { name: dateStr, total: dayRevenue };
+    const dayRepairs = filteredRepairs
+      .filter(t => format(new Date(t.created_at || Date.now()), 'MMM dd') === dateStr)
+      .reduce((sum, t) => sum + (t.estimated_cost || 0), 0);
+
+    return { name: dateStr, sales: daySales, repairs: dayRepairs, total: daySales + dayRepairs };
   });
-
-  // Prepare data for Top Products Chart
-  const productSalesMap = new Map<string, number>();
-  filteredSales.forEach(sale => {
-    sale.sale_items?.forEach(item => {
-      const current = productSalesMap.get(item.product_name) || 0;
-      // FIX: Use total_price, fallback to subtotal if missing
-      const itemRevenue = Number(item.total_price || item.subtotal || 0);
-      productSalesMap.set(item.product_name, current + itemRevenue);
-    });
-  });
-
-  const topProductsData = Array.from(productSalesMap.entries())
-    .map(([name, value]) => ({ name, value }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 5);
-
-  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <header className="border-b bg-card shadow-sm sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4 flex items-center gap-4">
           <Navigation />
-          <h1 className="text-2xl font-bold">Sales Reports</h1>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <TrendingUp className="h-6 w-6 text-primary" />
+            Executive Sales & Repair Reports
+          </h1>
         </div>
       </header>
 
@@ -761,204 +389,313 @@ const Reports = () => {
         <main className="flex-1 container mx-auto px-4 py-6 space-y-6">
           <Dashboard />
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {/* Combined Executive Financial KPI Banner */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             <Card>
               <CardHeader className="pb-2">
-                <CardDescription>Total Revenue</CardDescription>
-                <CardTitle className="text-3xl">{formatCurrency(totalRevenue)}</CardTitle>
-              </CardHeader>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardDescription>Monthly Revenue</CardDescription>
-                <CardTitle className="text-3xl">{formatCurrency(monthlyRevenue)}</CardTitle>
-              </CardHeader>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardDescription>Total Profit</CardDescription>
-                <CardTitle className="text-3xl">{formatCurrency(totalProfit)}</CardTitle>
-                <p className="text-xs text-muted-foreground">Margin: {profitMargin.toFixed(1)}%</p>
-              </CardHeader>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardDescription>Avg. Transaction</CardDescription>
-                <CardTitle className="text-3xl">{formatCurrency(averageTransaction)}</CardTitle>
-              </CardHeader>
-            </Card>
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-            <Card className="col-span-4">
-              <CardHeader>
-                <CardTitle>Sales Overview</CardTitle>
-              </CardHeader>
-              <CardContent className="pl-2">
-                <div className="h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={salesTrendData}>
-                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                      <XAxis
-                        dataKey="name"
-                        stroke="#888888"
-                        fontSize={12}
-                        tickLine={false}
-                        axisLine={false}
-                      />
-                      <YAxis
-                        stroke="#888888"
-                        fontSize={12}
-                        tickLine={false}
-                        axisLine={false}
-                        tickFormatter={(value) => formatPrice(value)}
-                      />
-                      <Tooltip
-                        cursor={{ fill: 'transparent' }}
-                        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                      />
-                      <Bar dataKey="total" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="col-span-3">
-              <CardHeader>
-                <CardTitle>Top Products</CardTitle>
-                <CardDescription>
-                  Best selling items by revenue
+                <CardDescription className="flex items-center gap-1 text-xs uppercase font-semibold">
+                  <ShoppingBag className="h-3.5 w-3.5 text-blue-600" /> POS Sales Revenue
                 </CardDescription>
+                <CardTitle className="text-2xl text-blue-600">{formatPrice(totalSalesRevenue)}</CardTitle>
+                <p className="text-xs text-muted-foreground">{filteredSales.length} Orders</p>
               </CardHeader>
-              <CardContent>
-                <div className="h-[300px] flex items-center justify-center">
-                  {topProductsData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={topProductsData}
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={60}
-                          outerRadius={80}
-                          paddingAngle={5}
-                          dataKey="value"
-                          label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                        >
-                          {topProductsData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip formatter={(value: number) => formatPrice(value)} />
-                        <Legend />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="text-muted-foreground text-sm">No sales data available</div>
-                  )}
-                </div>
-                <div className="mt-4 space-y-2">
-                  {topProductsData.slice(0, 5).map((item, index) => (
-                    <div key={index} className="flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
-                        <span>{item.name}</span>
-                      </div>
-                      <span className="font-medium">{formatCurrency(item.value)}</span>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription className="flex items-center gap-1 text-xs uppercase font-semibold">
+                  <Wrench className="h-3.5 w-3.5 text-purple-600" /> Repair Income
+                </CardDescription>
+                <CardTitle className="text-2xl text-purple-600">{formatPrice(totalRepairRevenue)}</CardTitle>
+                <p className="text-xs text-muted-foreground">{filteredRepairs.length} Repair Jobs</p>
+              </CardHeader>
+            </Card>
+
+            <Card className="bg-amber-50/40 dark:bg-amber-950/20 border-amber-200">
+              <CardHeader className="pb-2">
+                <CardDescription className="flex items-center gap-1 text-xs uppercase font-semibold text-amber-700 dark:text-amber-300">
+                  <Truck className="h-3.5 w-3.5 text-amber-600" /> Wholesaler Part Costs
+                </CardDescription>
+                <CardTitle className="text-2xl text-amber-600">{formatPrice(totalWholesalerCost)}</CardTitle>
+                <p className="text-xs text-amber-700 dark:text-amber-400">{filteredIntakes.length} Consignments</p>
+              </CardHeader>
+            </Card>
+
+            <Card className="bg-rose-50/40 dark:bg-rose-950/20 border-rose-200">
+              <CardHeader className="pb-2">
+                <CardDescription className="flex items-center gap-1 text-xs uppercase font-semibold text-rose-700 dark:text-rose-300">
+                  <RotateCcw className="h-3.5 w-3.5 text-rose-600" /> Refunds Issued
+                </CardDescription>
+                <CardTitle className="text-2xl text-rose-600">-{formatPrice(totalRefundsAmount)}</CardTitle>
+                <p className="text-xs text-rose-700 dark:text-rose-400">{filteredRefunds.length} Refunds</p>
+              </CardHeader>
+            </Card>
+
+            <Card className="bg-emerald-50/50 dark:bg-emerald-950/30 border-emerald-300">
+              <CardHeader className="pb-2">
+                <CardDescription className="flex items-center gap-1 text-xs uppercase font-semibold text-emerald-800 dark:text-emerald-300">
+                  <DollarSign className="h-3.5 w-3.5 text-emerald-600" /> Net Combined Profit
+                </CardDescription>
+                <CardTitle className="text-2xl text-emerald-600 dark:text-emerald-400 font-extrabold">{formatPrice(combinedNetProfit)}</CardTitle>
+                <p className="text-xs text-emerald-700 dark:text-emerald-300 font-medium">Sales + Repair Net</p>
+              </CardHeader>
             </Card>
           </div>
 
-          <Card>
-            <CardHeader>
-              <div className="flex flex-wrap items-center gap-4">
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" className="justify-start text-left font-normal">
-                      <CalendarIcon className="mr-2 h-4 w-4" />
-                      {startDate ? format(startDate, "PPP") : "Start date"}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0">
-                    <Calendar mode="single" selected={startDate} onSelect={setStartDate} />
-                  </PopoverContent>
-                </Popover>
+          {/* Date & Payment Controls Banner */}
+          <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-card border rounded-lg shadow-2xs">
+            <div className="flex flex-wrap items-center gap-3">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-8 text-xs font-normal">
+                    <CalendarIcon className="mr-2 h-3.5 w-3.5" />
+                    {startDate ? format(startDate, "PPP") : "Start date"}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0">
+                  <Calendar mode="single" selected={startDate} onSelect={setStartDate} />
+                </PopoverContent>
+              </Popover>
 
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" className="justify-start text-left font-normal">
-                      <CalendarIcon className="mr-2 h-4 w-4" />
-                      {endDate ? format(endDate, "PPP") : "End date"}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0">
-                    <Calendar mode="single" selected={endDate} onSelect={setEndDate} />
-                  </PopoverContent>
-                </Popover>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-8 text-xs font-normal">
+                    <CalendarIcon className="mr-2 h-3.5 w-3.5" />
+                    {endDate ? format(endDate, "PPP") : "End date"}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0">
+                  <Calendar mode="single" selected={endDate} onSelect={setEndDate} />
+                </PopoverContent>
+              </Popover>
 
-                <Select value={paymentFilter} onValueChange={setPaymentFilter}>
-                  <SelectTrigger className="w-[180px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Payments</SelectItem>
-                    <SelectItem value="cash">Cash</SelectItem>
-                    <SelectItem value="card">Card</SelectItem>
-                    <SelectItem value="other">Other</SelectItem>
-                  </SelectContent>
-                </Select>
+              <Select value={paymentFilter} onValueChange={setPaymentFilter}>
+                <SelectTrigger className="w-[150px] h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Payments</SelectItem>
+                  <SelectItem value="cash">Cash</SelectItem>
+                  <SelectItem value="card">Card</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
-                <Button onClick={exportToExcel} variant="outline" className="ml-auto">
-                  <FileSpreadsheet className="mr-2 h-4 w-4" />
-                  Export Excel
-                </Button>
+            <Button onClick={exportToExcel} className="h-8 text-xs font-semibold shadow-xs">
+              <FileSpreadsheet className="mr-1.5 h-4 w-4" />
+              Export Full Excel Report
+            </Button>
+          </div>
+
+          {/* Main Reports Navigation Tabs */}
+          <Tabs value={reportTab} onValueChange={setReportTab} className="space-y-4">
+            <TabsList>
+              <TabsTrigger value="overview">Executive Overview</TabsTrigger>
+              <TabsTrigger value="repairs">Repair Jobs ({filteredRepairs.length})</TabsTrigger>
+              <TabsTrigger value="wholesalers">Wholesaler Intakes ({filteredIntakes.length})</TabsTrigger>
+              <TabsTrigger value="refunds">Refunds Log ({filteredRefunds.length})</TabsTrigger>
+              <TabsTrigger value="sales">POS Sales ({filteredSales.length})</TabsTrigger>
+            </TabsList>
+
+            {/* Tab 1: Executive Overview Charts */}
+            <TabsContent value="overview">
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+                <Card className="col-span-7">
+                  <CardHeader>
+                    <CardTitle className="text-base">Revenue Breakdown (POS Sales vs Repairs)</CardTitle>
+                  </CardHeader>
+                  <CardContent className="pl-2">
+                    <div className="h-[300px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={salesTrendData}>
+                          <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                          <XAxis dataKey="name" stroke="#888888" fontSize={12} tickLine={false} axisLine={false} />
+                          <YAxis stroke="#888888" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(val) => formatPrice(val)} />
+                          <Tooltip cursor={{ fill: 'transparent' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
+                          <Bar dataKey="sales" name="POS Sales" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="repairs" name="Repair Revenue" fill="#9333ea" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Receipt</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Customer</TableHead>
-                    <TableHead>Total</TableHead>
-                    <TableHead>Payment</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredSales.map((sale) => (
-                    <TableRow key={sale.id}>
-                      <TableCell className="font-mono text-sm">{sale.receipt_number}</TableCell>
-                      <TableCell>{format(new Date(sale.created_at), "MMM dd, yyyy HH:mm")}</TableCell>
-                      <TableCell>{sale.customers?.name || "Walk-in"}</TableCell>
-                      <TableCell className="font-semibold">{formatCurrency(Number(sale.total_amount))}</TableCell>
-                      <TableCell>
-                        <Badge variant={sale.payment_method === "cash" ? "default" : "secondary"}>
-                          {sale.payment_method}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="outline" size="sm" onClick={() => viewDetails(sale)}>
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+            </TabsContent>
+
+            {/* Tab 2: Repair Jobs Report */}
+            <TabsContent value="repairs">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Wrench className="h-5 w-5 text-primary" /> Repair Jobs & Part Profitability Report
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Ticket #</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Device & Model</TableHead>
+                        <TableHead>Customer</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Customer Charge</TableHead>
+                        <TableHead>Wholesaler Part Cost</TableHead>
+                        <TableHead className="text-right">Net Repair Profit</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredRepairs.map((ticket) => {
+                        const parts = repairParts.filter(p => p.repair_ticket_id === ticket.id && !['returned', 'broken'].includes(p.status));
+                        const partCostSum = parts.reduce((sum, p) => sum + (p.unit_cost * p.quantity), 0);
+                        const customerCharge = ticket.estimated_cost || 0;
+                        const netTicketProfit = customerCharge - partCostSum;
+
+                        return (
+                          <TableRow key={ticket.id}>
+                            <TableCell className="font-mono font-bold text-primary text-xs">{ticket.ticket_number}</TableCell>
+                            <TableCell className="text-xs">{new Date(ticket.created_at || Date.now()).toLocaleDateString()}</TableCell>
+                            <TableCell className="font-medium text-xs">{ticket.device_name}</TableCell>
+                            <TableCell className="text-xs">{customerMap.get(ticket.customer_id || "") || "Walk-in Customer"}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="capitalize text-[10px]">{ticket.status.replace('_', ' ')}</Badge>
+                            </TableCell>
+                            <TableCell className="font-bold text-xs">{formatPrice(customerCharge)}</TableCell>
+                            <TableCell className="text-xs font-semibold text-amber-600">-{formatPrice(partCostSum)}</TableCell>
+                            <TableCell className="text-right font-extrabold text-xs text-emerald-600">{formatPrice(netTicketProfit)}</TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Tab 3: Wholesaler Intakes Report */}
+            <TabsContent value="wholesalers">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Truck className="h-5 w-5 text-primary" /> Wholesaler Intakes & Consignment Expenses
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Wholesaler Supplier</TableHead>
+                        <TableHead>Item / Part Name</TableHead>
+                        <TableHead>Qty x Unit Cost</TableHead>
+                        <TableHead>Total Agreed Cost</TableHead>
+                        <TableHead>Amount Paid</TableHead>
+                        <TableHead className="text-right">Balance Owed</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredIntakes.map((intake) => (
+                        <TableRow key={intake.id}>
+                          <TableCell className="text-xs font-mono">{new Date(intake.intake_date || intake.created_at || Date.now()).toLocaleDateString()}</TableCell>
+                          <TableCell className="font-bold text-xs text-primary">{wholesalerMap.get(intake.wholesaler_id) || "Supplier"}</TableCell>
+                          <TableCell className="text-xs font-medium">{intake.item_name}</TableCell>
+                          <TableCell className="text-xs">{intake.quantity}x @ {formatPrice(intake.agreed_unit_cost)}</TableCell>
+                          <TableCell className="text-xs font-bold text-amber-600">{formatPrice(intake.total_cost)}</TableCell>
+                          <TableCell className="text-xs font-semibold text-emerald-600">{formatPrice(intake.amount_paid)}</TableCell>
+                          <TableCell className="text-right font-bold text-xs">{formatPrice(intake.total_cost - intake.amount_paid)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Tab 4: Refunds Audit Log */}
+            <TabsContent value="refunds">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <RotateCcw className="h-5 w-5 text-rose-600" /> Processed Refunds Audit Log
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Refund #</TableHead>
+                        <TableHead>Date & Time</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Amount Refunded</TableHead>
+                        <TableHead>Method</TableHead>
+                        <TableHead className="text-right">Reason</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredRefunds.map((ref) => (
+                        <TableRow key={ref.id}>
+                          <TableCell className="font-mono font-bold text-xs text-rose-600">{ref.refund_number}</TableCell>
+                          <TableCell className="text-xs">{new Date(ref.created_at || Date.now()).toLocaleString()}</TableCell>
+                          <TableCell><Badge variant="outline" className="text-[10px] uppercase">{ref.refund_type}</Badge></TableCell>
+                          <TableCell className="font-bold text-xs text-rose-600">-{formatPrice(ref.amount)}</TableCell>
+                          <TableCell className="text-xs uppercase">{ref.payment_method}</TableCell>
+                          <TableCell className="text-right text-xs text-muted-foreground italic">{ref.reason}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Tab 5: POS Sales Receipts */}
+            <TabsContent value="sales">
+              <Card>
+                <CardContent className="pt-6">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Receipt #</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Customer</TableHead>
+                        <TableHead>Total Amount</TableHead>
+                        <TableHead>Payment Method</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredSales.map((sale) => (
+                        <TableRow key={sale.id}>
+                          <TableCell className="font-mono text-xs font-bold text-primary">{sale.receipt_number}</TableCell>
+                          <TableCell className="text-xs">{format(new Date(sale.created_at), "MMM dd, yyyy HH:mm")}</TableCell>
+                          <TableCell className="text-xs">{sale.customers?.name || "Walk-in Customer"}</TableCell>
+                          <TableCell className="font-bold text-xs">{formatPrice(Number(sale.total_amount))}</TableCell>
+                          <TableCell>
+                            <Badge variant={sale.payment_method === "cash" ? "default" : "secondary"} className="text-[10px]">
+                              {sale.payment_method}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => viewDetails(sale)}>
+                              <Eye className="h-3.5 w-3.5 mr-1" /> View
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
         </main>
       </div>
 
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Sale Details</DialogTitle>
+            <DialogTitle>Sale Receipt Details</DialogTitle>
             <DialogDescription>Receipt: {selectedSale?.receipt_number}</DialogDescription>
           </DialogHeader>
           {selectedSale && (
@@ -966,9 +703,7 @@ const Reports = () => {
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
                   <p className="text-muted-foreground">Date</p>
-                  <p className="font-medium">
-                    {format(new Date(selectedSale.created_at), "PPP HH:mm")}
-                  </p>
+                  <p className="font-medium">{format(new Date(selectedSale.created_at), "PPP HH:mm")}</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Customer</p>
@@ -980,16 +715,16 @@ const Reports = () => {
                 </div>
                 <div>
                   <p className="text-muted-foreground">Total</p>
-                  <p className="font-medium text-lg">{formatCurrency(Number(selectedSale.total_amount))}</p>
+                  <p className="font-medium text-lg text-primary">{formatPrice(Number(selectedSale.total_amount))}</p>
                 </div>
               </div>
 
               <div>
-                <h4 className="font-semibold mb-2">Items</h4>
+                <h4 className="font-semibold mb-2 text-xs uppercase text-muted-foreground">Items Sold</h4>
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Product</TableHead>
+                      <TableHead>Product Name</TableHead>
                       <TableHead>Qty</TableHead>
                       <TableHead>Price</TableHead>
                       <TableHead className="text-right">Subtotal</TableHead>
@@ -1000,8 +735,8 @@ const Reports = () => {
                       <TableRow key={idx}>
                         <TableCell>{item.product_name}</TableCell>
                         <TableCell>{item.quantity}</TableCell>
-                        <TableCell>{formatCurrency(Number(item.unit_price))}</TableCell>
-                        <TableCell className="text-right">{formatCurrency(Number(item.total_price || item.subtotal || 0))}</TableCell>
+                        <TableCell>{formatPrice(Number(item.unit_price))}</TableCell>
+                        <TableCell className="text-right font-bold">{formatPrice(Number(item.total_price || item.subtotal || 0))}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
