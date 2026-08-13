@@ -161,7 +161,7 @@ export const CheckoutDialog = ({
       const saleItems: CachedSaleItem[] = cartItems.map(item => ({
         id: crypto.randomUUID(),
         sale_id: newSaleId,
-        product_id: item.productId || (item.repairTicketId ? '00000000-0000-0000-0000-000000000000' : item.id),
+        product_id: (item.repairTicketId && !item.productId) ? (null as any) : (item.productId || item.id),
         product_name: item.name,
         quantity: item.quantity,
         unit_price: item.price,

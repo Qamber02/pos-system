@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Search, RefreshCw, Wrench, Clock, CheckCircle2, AlertCircle, Eye, Edit, Smartphone, UserCheck, DollarSign } from "lucide-react";
+import { Plus, Search, RefreshCw, Wrench, Clock, CheckCircle2, AlertCircle, Eye, Edit, Smartphone, UserCheck, DollarSign, Cpu, Code } from "lucide-react";
 import { toast } from "sonner";
 import { db, CachedRepairTicket, RepairStatus } from "@/lib/db";
 import { syncService } from "@/lib/syncService";
@@ -38,6 +38,7 @@ const RepairTickets = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<string>("active");
+  const [typeFilter, setTypeFilter] = useState<'all' | 'hardware' | 'software'>('all');
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [techDialogOpen, setTechDialogOpen] = useState(false);
@@ -91,9 +92,15 @@ const RepairTickets = () => {
       t.ticket_number.toLowerCase().includes(query) ||
       t.device_name.toLowerCase().includes(query) ||
       (t.serial_or_imei && t.serial_or_imei.toLowerCase().includes(query)) ||
-      (t.customer?.name && t.customer.name.toLowerCase().includes(query));
+      (t.customer?.name && t.customer.name.toLowerCase().includes(query)) ||
+      (t.customer?.phone && t.customer.phone.toLowerCase().includes(query));
 
     if (!matchesSearch) return false;
+
+    if (typeFilter !== 'all') {
+      const ticketType = t.repair_type || 'hardware';
+      if (ticketType !== typeFilter) return false;
+    }
 
     if (activeTab === "active") return !['completed', 'cancelled'].includes(t.status);
     if (activeTab === "ready") return t.status === "ready_for_pickup";
@@ -103,7 +110,8 @@ const RepairTickets = () => {
   });
 
   const activeCount = tickets.filter(t => !['completed', 'cancelled'].includes(t.status)).length;
-  const inRepairCount = tickets.filter(t => t.status === 'in_repair').length;
+  const hardwareActiveCount = tickets.filter(t => !['completed', 'cancelled'].includes(t.status) && (t.repair_type === 'hardware' || !t.repair_type)).length;
+  const softwareActiveCount = tickets.filter(t => !['completed', 'cancelled'].includes(t.status) && t.repair_type === 'software').length;
   const readyCount = tickets.filter(t => t.status === 'ready_for_pickup').length;
   const completedCount = tickets.filter(t => t.status === 'completed').length;
 
@@ -153,14 +161,26 @@ const RepairTickets = () => {
               </CardContent>
             </Card>
 
-            <Card className="border-purple-200/80 dark:border-purple-900/40 shadow-sm">
+            <Card className="border-blue-200/80 dark:border-blue-900/40 shadow-sm">
               <CardContent className="pt-4 flex items-center justify-between">
                 <div>
-                  <p className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider">On Bench</p>
-                  <p className="text-2xl font-extrabold text-purple-600 dark:text-purple-400 mt-0.5">{inRepairCount}</p>
+                  <p className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider">Hardware Repairs</p>
+                  <p className="text-2xl font-extrabold text-blue-600 dark:text-blue-400 mt-0.5">{hardwareActiveCount}</p>
                 </div>
-                <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-500">
-                  <Wrench className="h-5 w-5" />
+                <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-500">
+                  <Cpu className="h-5 w-5" />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-indigo-200/80 dark:border-indigo-900/40 shadow-sm">
+              <CardContent className="pt-4 flex items-center justify-between">
+                <div>
+                  <p className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider">Software Services</p>
+                  <p className="text-2xl font-extrabold text-indigo-600 dark:text-indigo-400 mt-0.5">{softwareActiveCount}</p>
+                </div>
+                <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-500">
+                  <Code className="h-5 w-5" />
                 </div>
               </CardContent>
             </Card>
@@ -176,18 +196,6 @@ const RepairTickets = () => {
                 </div>
               </CardContent>
             </Card>
-
-            <Card className="border-zinc-200/80 dark:border-zinc-800 shadow-sm">
-              <CardContent className="pt-4 flex items-center justify-between">
-                <div>
-                  <p className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider">Completed Jobs</p>
-                  <p className="text-2xl font-extrabold text-foreground mt-0.5">{completedCount}</p>
-                </div>
-                <div className="p-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-500">
-                  <CheckCircle2 className="h-5 w-5" />
-                </div>
-              </CardContent>
-            </Card>
           </div>
 
           {/* Search & Filter Bar */}
@@ -195,11 +203,48 @@ const RepairTickets = () => {
             <div className="relative w-full sm:w-80">
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search ticket #, IMEI, customer, device..."
+                placeholder="Search ticket #, IMEI, customer, phone, device..."
                 className="pl-9 text-xs h-9 bg-card shadow-none"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
+            </div>
+
+            {/* Type Filter Segmented Buttons */}
+            <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-lg border text-xs">
+              <button
+                type="button"
+                onClick={() => setTypeFilter('all')}
+                className={`px-2.5 py-1 rounded-md font-medium transition-all ${
+                  typeFilter === 'all'
+                    ? 'bg-background text-foreground shadow-xs font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                All Jobs
+              </button>
+              <button
+                type="button"
+                onClick={() => setTypeFilter('hardware')}
+                className={`px-2.5 py-1 rounded-md font-medium transition-all flex items-center gap-1 ${
+                  typeFilter === 'hardware'
+                    ? 'bg-blue-600 text-white shadow-xs font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Cpu className="h-3 w-3" /> Hardware
+              </button>
+              <button
+                type="button"
+                onClick={() => setTypeFilter('software')}
+                className={`px-2.5 py-1 rounded-md font-medium transition-all flex items-center gap-1 ${
+                  typeFilter === 'software'
+                    ? 'bg-indigo-600 text-white shadow-xs font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Code className="h-3 w-3" /> Software
+              </button>
             </div>
           </div>
 
@@ -242,7 +287,15 @@ const RepairTickets = () => {
                           return (
                             <TableRow key={ticket.id} className="hover:bg-muted/20 transition-colors">
                               <TableCell className="font-mono font-bold text-primary text-xs">
-                                {ticket.ticket_number}
+                                <div>{ticket.ticket_number}</div>
+                                <Badge variant="outline" className={`mt-1 text-[9px] px-1.5 py-0 inline-flex items-center gap-1 font-semibold ${
+                                  ticket.repair_type === 'software'
+                                    ? 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/50 dark:text-indigo-300 dark:border-indigo-800'
+                                    : 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/50 dark:text-blue-300 dark:border-blue-800'
+                                }`}>
+                                  {ticket.repair_type === 'software' ? <Code className="h-2.5 w-2.5 text-indigo-600" /> : <Cpu className="h-2.5 w-2.5 text-blue-600" />}
+                                  {ticket.repair_type === 'software' ? 'Software' : 'Hardware'}
+                                </Badge>
                               </TableCell>
                               <TableCell>
                                 <div className="font-semibold text-xs text-foreground">{ticket.device_name}</div>

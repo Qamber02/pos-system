@@ -10,6 +10,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 
+import { db, CachedSale, CachedSaleItem, CachedRefund } from "@/lib/db";
+import { syncService } from "@/lib/syncService";
+
 interface ReturnDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -30,48 +33,74 @@ export const ReturnDialog = ({ open, onOpenChange }: ReturnDialogProps) => {
   const [returnItems, setReturnItems] = useState<Record<string, ReturnItemState>>({});
 
   const handleSearch = async () => {
-    if (!receiptNumber.trim()) {
+    const trimmedReceipt = receiptNumber.trim();
+    if (!trimmedReceipt) {
       toast.error("Please enter a receipt number");
       return;
     }
 
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from("sales")
-        .select(`
-          *,
-          sale_items (
-            id,
-            product_id,
-            product_name,
-            quantity,
-            unit_price,
-            subtotal
-          )
-        `)
-        .eq("receipt_number", receiptNumber.trim())
-        .single();
+      // 1. Try finding in local Dexie database first (works offline)
+      const localSale = await db.sales.where('receipt_number').equals(trimmedReceipt).first();
+      
+      if (localSale) {
+        const localItems = await db.saleItems.where('sale_id').equals(localSale.id).toArray();
+        const initialReturnState: Record<string, ReturnItemState> = {};
+        localItems.forEach((item) => {
+          initialReturnState[item.id] = {
+            selected: false,
+            returnQuantity: item.quantity
+          };
+        });
 
-      if (error) throw error;
-
-      if (!data) {
-        toast.error("Sale not found");
+        setSale({ ...localSale, sale_items: localItems });
+        setReturnItems(initialReturnState);
+        toast.success("Sale found (Local Database)");
+        setLoading(false);
         return;
       }
 
-      // Initialize return state for all items
-      const initialReturnState: Record<string, ReturnItemState> = {};
-      data.sale_items.forEach((item: any) => {
-        initialReturnState[item.id] = {
-          selected: false,
-          returnQuantity: item.quantity
-        };
-      });
+      // 2. Fallback to Supabase cloud if online
+      if (navigator.onLine) {
+        const { data, error } = await supabase
+          .from("sales")
+          .select(`
+            *,
+            sale_items (
+              id,
+              product_id,
+              product_name,
+              quantity,
+              unit_price,
+              subtotal,
+              variant_id
+            )
+          `)
+          .eq("receipt_number", trimmedReceipt)
+          .single();
 
-      setSale(data);
-      setReturnItems(initialReturnState);
-      toast.success("Sale found");
+        if (error) throw error;
+
+        if (data) {
+          const initialReturnState: Record<string, ReturnItemState> = {};
+          data.sale_items.forEach((item: any) => {
+            initialReturnState[item.id] = {
+              selected: false,
+              returnQuantity: item.quantity
+            };
+          });
+
+          setSale(data);
+          setReturnItems(initialReturnState);
+          toast.success("Sale found (Cloud)");
+          setLoading(false);
+          return;
+        }
+      }
+
+      toast.error("Sale receipt not found");
+      setSale(null);
     } catch (error: any) {
       console.error("Error finding sale:", error);
       toast.error("Sale not found");
@@ -92,7 +121,6 @@ export const ReturnDialog = ({ open, onOpenChange }: ReturnDialogProps) => {
   };
 
   const updateReturnQuantity = (itemId: string, quantity: number, maxQuantity: number) => {
-    // Ensure quantity is valid (1 to max)
     const validQuantity = Math.max(1, Math.min(quantity, maxQuantity));
     setReturnItems(prev => ({
       ...prev,
@@ -106,13 +134,9 @@ export const ReturnDialog = ({ open, onOpenChange }: ReturnDialogProps) => {
   const calculateRefundTotal = () => {
     if (!sale) return 0;
     let total = 0;
-    sale.sale_items.forEach((item: any) => {
+    sale.sale_items?.forEach((item: any) => {
       const state = returnItems[item.id];
       if (state?.selected) {
-        // Calculate proportional refund based on unit price
-        // Note: This assumes no complex discounts per item. 
-        // If there was a global discount, we might need to adjust.
-        // For now, using unit_price * returnQuantity is safe.
         total += Number(item.unit_price) * state.returnQuantity;
       }
     });
@@ -122,7 +146,7 @@ export const ReturnDialog = ({ open, onOpenChange }: ReturnDialogProps) => {
   const handleReturn = async () => {
     if (!sale) return;
 
-    const itemsToReturn = sale.sale_items.filter((item: any) => returnItems[item.id]?.selected);
+    const itemsToReturn = sale.sale_items?.filter((item: any) => returnItems[item.id]?.selected) || [];
 
     if (itemsToReturn.length === 0) {
       toast.error("Please select at least one item to return");
@@ -135,35 +159,42 @@ export const ReturnDialog = ({ open, onOpenChange }: ReturnDialogProps) => {
 
     setProcessing(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("User not authenticated");
+      let activeUserId = "d0d0d0d0-d0d0-d0d0-d0d0-d0d0d0d0d0d0";
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user?.id) activeUserId = user.id;
+      } catch {}
 
       const refundTotal = calculateRefundTotal();
       const returnReceiptNumber = `RTN-${sale.receipt_number}-${Date.now().toString().slice(-4)}`;
+      const nowIso = new Date().toISOString();
+      const nowTimestamp = Date.now();
+      const newReturnSaleId = crypto.randomUUID();
 
-      // 1. Create Return Sale Record
-      const { data: returnSale, error: returnError } = await supabase
-        .from("sales")
-        .insert({
-          receipt_number: returnReceiptNumber,
-          customer_id: sale.customer_id,
-          subtotal: -refundTotal,
-          discount_amount: 0, // Simplified for partial returns
-          tax_amount: 0,      // Simplified
-          total_amount: -refundTotal,
-          payment_method: sale.payment_method,
-          amount_paid: -refundTotal,
-          change_amount: 0,
-          user_id: user.id,
-          notes: `Partial Return for ${sale.receipt_number}`,
-        })
-        .select()
-        .single();
-
-      if (returnError) throw returnError;
+      // 1. Create Return Sale Record (Offline-ready)
+      const returnSale: CachedSale = {
+        id: newReturnSaleId,
+        receipt_number: returnReceiptNumber,
+        customer_id: sale.customer_id,
+        subtotal: -refundTotal,
+        discount_amount: 0,
+        tax_amount: 0,
+        total_amount: -refundTotal,
+        payment_method: sale.payment_method || 'cash',
+        amount_paid: -refundTotal,
+        change_amount: 0,
+        user_id: activeUserId,
+        notes: `Partial Return for ${sale.receipt_number}`,
+        synced: false,
+        lastModified: nowTimestamp,
+        created_at: nowIso
+      };
+      await syncService.queueOperation('sales', 'insert', returnSale);
 
       // 1b. Create Audit Refund Record
-      await supabase.from("refunds").insert({
+      const refundRecord: CachedRefund = {
+        id: crypto.randomUUID(),
+        user_id: activeUserId,
         sale_id: sale.id,
         refund_number: returnReceiptNumber,
         amount: refundTotal,
@@ -171,39 +202,60 @@ export const ReturnDialog = ({ open, onOpenChange }: ReturnDialogProps) => {
         payment_method: sale.payment_method || 'cash',
         reason: `POS Return for receipt ${sale.receipt_number}`,
         restock_item: true,
-        processed_by: user.id,
-        user_id: user.id
-      });
+        processed_by: activeUserId,
+        synced: false,
+        lastModified: nowTimestamp,
+        created_at: nowIso
+      };
+      await syncService.queueOperation('refunds', 'insert', refundRecord);
 
-      // 2. Create Return Items and Restore Stock
+      // 2. Create Return Items and Restore Stock in Dexie & Sync
       for (const item of itemsToReturn) {
         const state = returnItems[item.id];
         const qtyToReturn = state.returnQuantity;
         const refundAmount = Number(item.unit_price) * qtyToReturn;
 
-        // Insert negative sale item
-        await supabase.from("sale_items").insert({
-          sale_id: returnSale.id,
+        const returnSaleItem: CachedSaleItem = {
+          id: crypto.randomUUID(),
+          sale_id: newReturnSaleId,
           product_id: item.product_id,
           product_name: item.product_name,
           quantity: -qtyToReturn,
           unit_price: item.unit_price,
           subtotal: -refundAmount,
-        });
+          variant_id: item.variant_id,
+          synced: false,
+          lastModified: nowTimestamp
+        };
+        await syncService.queueOperation('saleItems', 'insert', returnSaleItem);
 
-        // Restore stock
+        // Restore stock in local database
         if (item.product_id) {
-          const { data: product } = await supabase
-            .from("products")
-            .select("stock_quantity")
-            .eq("id", item.product_id)
-            .single();
-
+          const product = await db.products.get(item.product_id);
           if (product) {
-            await supabase
-              .from("products")
-              .update({ stock_quantity: product.stock_quantity + qtyToReturn })
-              .eq("id", item.product_id);
+            const updatedProduct = {
+              ...product,
+              stock_quantity: product.stock_quantity + qtyToReturn,
+              lastModified: nowTimestamp,
+              synced: false,
+              updated_at: nowIso
+            };
+            await syncService.queueOperation('products', 'update', updatedProduct);
+          }
+        }
+
+        // Restore variant stock if present
+        if (item.variant_id) {
+          const variant = await db.productVariants.get(item.variant_id);
+          if (variant) {
+            const updatedVariant = {
+              ...variant,
+              stock_quantity: variant.stock_quantity + qtyToReturn,
+              lastModified: nowTimestamp,
+              synced: false,
+              updated_at: nowIso
+            };
+            await syncService.queueOperation('productVariants', 'update', updatedVariant);
           }
         }
       }

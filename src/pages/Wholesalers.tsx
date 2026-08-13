@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Truck, Plus, Search, DollarSign, CreditCard, RefreshCw, Layers, Phone, User, Package, CheckCircle2, AlertCircle } from "lucide-react";
+import { Truck, Plus, Search, DollarSign, CreditCard, RefreshCw, Layers, Phone, User, Package, CheckCircle2, AlertCircle, Edit, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { db, CachedWholesaler, CachedWholesalerIntake, CachedWholesalerPayment, CachedProduct } from "@/lib/db";
 import { syncService } from "@/lib/syncService";
@@ -80,6 +80,8 @@ const Wholesalers = () => {
     }
   };
 
+  const [editingWholesaler, setEditingWholesaler] = useState<CachedWholesaler | null>(null);
+
   // Helper Calculations
   const getWholesalerStats = (wholesalerId: string) => {
     const wIntakes = intakes.filter(i => i.wholesaler_id === wholesalerId);
@@ -93,39 +95,82 @@ const Wholesalers = () => {
   const grandTotalPaid = intakes.reduce((sum, i) => sum + i.amount_paid, 0);
   const grandRemainingOwed = grandTotalOwed - grandTotalPaid;
 
-  // Add Wholesaler
-  const handleAddWholesaler = async () => {
+  const handleOpenAddWholesaler = () => {
+    setEditingWholesaler(null);
+    setWName(""); setWContact(""); setWPhone(""); setWNotes("");
+    setAddWholesalerOpen(true);
+  };
+
+  const handleOpenEditWholesaler = (w: CachedWholesaler) => {
+    setEditingWholesaler(w);
+    setWName(w.name);
+    setWContact(w.contact_person || "");
+    setWPhone(w.phone || "");
+    setWNotes(w.notes || "");
+    setAddWholesalerOpen(true);
+  };
+
+  const handleDeleteWholesaler = async (id: string, name: string) => {
+    if (!confirm(`Delete wholesaler "${name}"?`)) return;
+    try {
+      await syncService.queueOperation('wholesalers', 'delete', { id });
+      toast.success(`Wholesaler "${name}" deleted`);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to delete wholesaler");
+    }
+  };
+
+  // Add / Edit Wholesaler
+  const handleSaveWholesaler = async () => {
     if (!wName.trim()) {
       toast.error("Wholesaler name is required");
       return;
     }
     try {
-      let activeUserId = "d0d0d0d0-d0d0-d0d0-d0d0-d0d0d0d0d0d0";
+      let activeUserId = "d0d0d0d0-d0d0-d0d0-d0d0d0d0d0d0";
       try {
         const { data: { user } } = await supabase.auth.getUser();
         if (user?.id) activeUserId = user.id;
       } catch {}
 
       const nowIso = new Date().toISOString();
-      const newWholesaler: CachedWholesaler = {
-        id: crypto.randomUUID(),
-        user_id: activeUserId,
-        name: wName.trim(),
-        contact_person: wContact.trim() || null,
-        phone: wPhone.trim() || null,
-        notes: wNotes.trim() || null,
-        synced: false,
-        lastModified: Date.now(),
-        created_at: nowIso,
-        updated_at: nowIso
-      };
+      const nowTs = Date.now();
 
-      await syncService.queueOperation('wholesalers', 'insert', newWholesaler);
-      toast.success(`Wholesaler "${newWholesaler.name}" registered`);
+      if (editingWholesaler) {
+        const updatedWholesaler: CachedWholesaler = {
+          ...editingWholesaler,
+          name: wName.trim(),
+          contact_person: wContact.trim() || null,
+          phone: wPhone.trim() || null,
+          notes: wNotes.trim() || null,
+          synced: false,
+          lastModified: nowTs,
+          updated_at: nowIso
+        };
+        await syncService.queueOperation('wholesalers', 'update', updatedWholesaler);
+        toast.success(`Wholesaler "${wName}" updated`);
+      } else {
+        const newWholesaler: CachedWholesaler = {
+          id: crypto.randomUUID(),
+          user_id: activeUserId,
+          name: wName.trim(),
+          contact_person: wContact.trim() || null,
+          phone: wPhone.trim() || null,
+          notes: wNotes.trim() || null,
+          synced: false,
+          lastModified: nowTs,
+          created_at: nowIso,
+          updated_at: nowIso
+        };
+        await syncService.queueOperation('wholesalers', 'insert', newWholesaler);
+        toast.success(`Wholesaler "${newWholesaler.name}" registered`);
+      }
+
       setAddWholesalerOpen(false);
+      setEditingWholesaler(null);
       setWName(""); setWContact(""); setWPhone(""); setWNotes("");
     } catch (err: any) {
-      toast.error(err.message || "Failed to add wholesaler");
+      toast.error(err.message || "Failed to save wholesaler");
     }
   };
 
@@ -274,6 +319,40 @@ const Wholesalers = () => {
     }
   };
 
+  // Filtered lists based on search query
+  const filteredWholesalers = wholesalers.filter((w) => {
+    const q = searchQuery.toLowerCase();
+    return (
+      w.name.toLowerCase().includes(q) ||
+      (w.contact_person && w.contact_person.toLowerCase().includes(q)) ||
+      (w.phone && w.phone.toLowerCase().includes(q)) ||
+      (w.notes && w.notes.toLowerCase().includes(q))
+    );
+  });
+
+  const filteredIntakes = intakes.filter((intake) => {
+    const q = searchQuery.toLowerCase();
+    const w = wholesalers.find(x => x.id === intake.wholesaler_id);
+    return (
+      intake.item_name.toLowerCase().includes(q) ||
+      (w && w.name.toLowerCase().includes(q)) ||
+      (intake.notes && intake.notes.toLowerCase().includes(q)) ||
+      intake.status.toLowerCase().includes(q)
+    );
+  });
+
+  const filteredPayments = payments.filter((p) => {
+    const q = searchQuery.toLowerCase();
+    const w = wholesalers.find(x => x.id === p.wholesaler_id);
+    const intake = intakes.find(i => i.id === p.intake_id);
+    return (
+      (w && w.name.toLowerCase().includes(q)) ||
+      (intake && intake.item_name.toLowerCase().includes(q)) ||
+      (p.notes && p.notes.toLowerCase().includes(q)) ||
+      p.payment_method.toLowerCase().includes(q)
+    );
+  });
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <header className="border-b bg-card/95 backdrop-blur-md shadow-sm sticky top-0 z-40">
@@ -348,7 +427,7 @@ const Wholesalers = () => {
                 <RefreshCw className={`mr-2 h-4 w-4 ${isSyncing ? "animate-spin" : ""}`} />
                 {isSyncing ? "Syncing..." : "Sync"}
               </Button>
-              <Button variant="outline" onClick={() => setAddWholesalerOpen(true)}>
+              <Button variant="outline" onClick={handleOpenAddWholesaler}>
                 <Plus className="mr-2 h-4 w-4" /> Add Wholesaler
               </Button>
               <Button onClick={() => setLogIntakeOpen(true)}>
@@ -360,20 +439,20 @@ const Wholesalers = () => {
           {/* Main Navigation Tabs */}
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
             <TabsList>
-              <TabsTrigger value="wholesalers">Wholesalers ({wholesalers.length})</TabsTrigger>
-              <TabsTrigger value="intakes">Consignment Intakes ({intakes.length})</TabsTrigger>
-              <TabsTrigger value="payments">Payment Log ({payments.length})</TabsTrigger>
+              <TabsTrigger value="wholesalers">Wholesalers ({filteredWholesalers.length})</TabsTrigger>
+              <TabsTrigger value="intakes">Consignment Intakes ({filteredIntakes.length})</TabsTrigger>
+              <TabsTrigger value="payments">Payment Log ({filteredPayments.length})</TabsTrigger>
             </TabsList>
 
             {/* Tab 1: Wholesalers List */}
             <TabsContent value="wholesalers">
               <Card>
                 <CardContent className="pt-6">
-                  {wholesalers.length === 0 ? (
+                  {filteredWholesalers.length === 0 ? (
                     <div className="text-center py-12 text-muted-foreground space-y-2">
                       <Truck className="h-10 w-10 mx-auto text-muted-foreground/30" />
-                      <p className="font-semibold">No wholesalers registered yet</p>
-                      <p className="text-xs">Click "Add Wholesaler" to add your first supplier.</p>
+                      <p className="font-semibold">{searchQuery ? `No wholesalers match "${searchQuery}"` : "No wholesalers registered yet"}</p>
+                      <p className="text-xs">{searchQuery ? "Try searching with a different term." : "Click 'Add Wholesaler' to add your first supplier."}</p>
                     </div>
                   ) : (
                     <Table>
@@ -389,7 +468,7 @@ const Wholesalers = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {wholesalers.map((w) => {
+                        {filteredWholesalers.map((w) => {
                           const stats = getWholesalerStats(w.id);
 
                           return (
@@ -416,6 +495,22 @@ const Wholesalers = () => {
                                 >
                                   <Package className="h-3 w-3 mr-1" /> Intake
                                 </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 w-7 p-0"
+                                  onClick={() => handleOpenEditWholesaler(w)}
+                                >
+                                  <Edit className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 w-7 p-0 text-destructive"
+                                  onClick={() => handleDeleteWholesaler(w.id, w.name)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
                               </TableCell>
                             </TableRow>
                           );
@@ -431,56 +526,60 @@ const Wholesalers = () => {
             <TabsContent value="intakes">
               <Card>
                 <CardContent className="pt-6">
-                  {intakes.length === 0 ? (
+                  {filteredIntakes.length === 0 ? (
                     <div className="text-center py-12 text-muted-foreground space-y-2">
                       <Layers className="h-10 w-10 mx-auto text-muted-foreground/30" />
-                      <p className="font-semibold">No consignment intakes recorded</p>
-                      <p className="text-xs">Log intakes of parts or devices taken on credit.</p>
+                      <p className="font-semibold">{searchQuery ? `No intakes match "${searchQuery}"` : "No consignment intakes recorded"}</p>
+                      <p className="text-xs">{searchQuery ? "Try searching with a different term." : "Log intakes of parts or devices taken on credit."}</p>
                     </div>
                   ) : (
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Date</TableHead>
+                          <TableHead>Intake Date</TableHead>
                           <TableHead>Wholesaler</TableHead>
-                          <TableHead>Item / Part Name</TableHead>
-                          <TableHead>Qty x Unit Cost</TableHead>
+                          <TableHead>Item / Part</TableHead>
+                          <TableHead>Qty</TableHead>
+                          <TableHead>Unit Cost</TableHead>
                           <TableHead>Total Cost</TableHead>
-                          <TableHead>Amount Paid</TableHead>
+                          <TableHead>Paid</TableHead>
                           <TableHead>Status</TableHead>
-                          <TableHead className="text-right">Action</TableHead>
+                          <TableHead className="text-right">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {intakes.map((intake) => {
-                          const w = wholesalers.find(x => x.id === intake.wholesaler_id);
-                          const remaining = intake.total_cost - intake.amount_paid;
+                        {filteredIntakes.map((i) => {
+                          const w = wholesalers.find(x => x.id === i.wholesaler_id);
+                          const remaining = i.total_cost - i.amount_paid;
 
                           return (
-                            <TableRow key={intake.id}>
+                            <TableRow key={i.id}>
                               <TableCell className="text-xs font-mono">
-                                {new Date(intake.intake_date || intake.created_at || Date.now()).toLocaleDateString()}
+                                {new Date(i.intake_date || i.created_at || Date.now()).toLocaleDateString()}
                               </TableCell>
                               <TableCell className="font-medium text-xs">{w?.name || 'Unknown'}</TableCell>
-                              <TableCell className="font-bold text-xs">{intake.item_name}</TableCell>
-                              <TableCell className="text-xs">
-                                {intake.quantity}x @ {formatCurrency(intake.agreed_unit_cost)}
-                              </TableCell>
-                              <TableCell className="text-xs font-semibold">{formatCurrency(intake.total_cost)}</TableCell>
-                              <TableCell className="text-xs font-semibold text-emerald-600">{formatCurrency(intake.amount_paid)}</TableCell>
+                              <TableCell className="text-xs font-semibold">{i.item_name}</TableCell>
+                              <TableCell className="text-xs">{i.quantity}</TableCell>
+                              <TableCell className="text-xs">{formatCurrency(i.agreed_unit_cost)}</TableCell>
+                              <TableCell className="text-xs font-semibold">{formatCurrency(i.total_cost)}</TableCell>
+                              <TableCell className="text-xs font-semibold text-emerald-600">{formatCurrency(i.amount_paid)}</TableCell>
                               <TableCell>
-                                <Badge variant={intake.status === 'paid' ? 'default' : intake.status === 'partial' ? 'outline' : 'secondary'} className="text-[10px] capitalize">
-                                  {intake.status} ({formatCurrency(remaining)} left)
-                                </Badge>
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium capitalize ${
+                                  i.status === 'settled' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400' :
+                                  i.status === 'partial' ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-400' :
+                                  'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400'
+                                }`}>
+                                  {i.status}
+                                </span>
                               </TableCell>
-                              <TableCell className="text-right">
-                                {intake.status !== 'paid' && (
+                              <TableCell className="text-right space-x-1">
+                                {remaining > 0 && (
                                   <Button
                                     size="sm"
-                                    className="h-7 text-xs"
-                                    onClick={() => { setPIntakeId(intake.id); setPAmount(String(remaining)); setLogPaymentOpen(true); }}
+                                    className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                                    onClick={() => { setPIntakeId(i.id); setPAmount(String(remaining)); setLogPaymentOpen(true); }}
                                   >
-                                    <DollarSign className="h-3 w-3 mr-1" /> Pay
+                                    <DollarSign className="h-3 w-3 mr-1" /> Pay {formatCurrency(remaining)}
                                   </Button>
                                 )}
                               </TableCell>
@@ -494,20 +593,21 @@ const Wholesalers = () => {
               </Card>
             </TabsContent>
 
-            {/* Tab 3: Payment History */}
+            {/* Tab 3: Payments List */}
             <TabsContent value="payments">
               <Card>
                 <CardContent className="pt-6">
-                  {payments.length === 0 ? (
+                  {filteredPayments.length === 0 ? (
                     <div className="text-center py-12 text-muted-foreground space-y-2">
                       <CreditCard className="h-10 w-10 mx-auto text-muted-foreground/30" />
-                      <p className="font-semibold">No wholesaler payments recorded yet</p>
+                      <p className="font-semibold">{searchQuery ? `No payments match "${searchQuery}"` : "No wholesaler payouts recorded yet"}</p>
+                      <p className="text-xs">Logged settlement payments to suppliers will appear here.</p>
                     </div>
                   ) : (
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Date</TableHead>
+                          <TableHead>Payment Date</TableHead>
                           <TableHead>Wholesaler</TableHead>
                           <TableHead>Intake Item</TableHead>
                           <TableHead>Amount Paid</TableHead>
@@ -516,7 +616,7 @@ const Wholesalers = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {payments.map((p) => {
+                        {filteredPayments.map((p) => {
                           const w = wholesalers.find(x => x.id === p.wholesaler_id);
                           const intake = intakes.find(i => i.id === p.intake_id);
 
@@ -543,12 +643,12 @@ const Wholesalers = () => {
         </main>
       </div>
 
-      {/* Modal 1: Add Wholesaler */}
+      {/* Modal 1: Add / Edit Wholesaler */}
       <Dialog open={addWholesalerOpen} onOpenChange={setAddWholesalerOpen}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
             <DialogTitle className="text-base flex items-center gap-2">
-              <Truck className="h-5 w-5 text-primary" /> Register Wholesaler / Supplier
+              <Truck className="h-5 w-5 text-primary" /> {editingWholesaler ? "Edit Wholesaler Details" : "Register Wholesaler / Supplier"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2 text-xs">
@@ -573,7 +673,7 @@ const Wholesalers = () => {
           </div>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => setAddWholesalerOpen(false)}>Cancel</Button>
-            <Button size="sm" onClick={handleAddWholesaler}>Save Wholesaler</Button>
+            <Button size="sm" onClick={handleSaveWholesaler}>{editingWholesaler ? "Update Wholesaler" : "Save Wholesaler"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -611,6 +711,21 @@ const Wholesalers = () => {
                 </SelectContent>
               </Select>
             </div>
+
+            {iProductId && (
+              <div className="flex items-center space-x-2 py-1">
+                <input
+                  type="checkbox"
+                  id="updateStockCheck"
+                  checked={iUpdateStock}
+                  onChange={(e) => setIUpdateStock(e.target.checked)}
+                  className="rounded border-zinc-300 h-4 w-4 text-primary"
+                />
+                <Label htmlFor="updateStockCheck" className="text-xs cursor-pointer">
+                  Automatically increment inventory stock quantity (+{iQuantity || 0})
+                </Label>
+              </div>
+            )}
 
             <div className="space-y-1">
               <Label className="text-xs">Item / Part Name *</Label>

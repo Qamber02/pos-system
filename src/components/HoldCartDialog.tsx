@@ -10,24 +10,17 @@ import { CartItem } from "./Cart";
 import { Card, CardContent } from "@/components/ui/card";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 
+import { db, CachedHeldCart } from "@/lib/db";
+import { syncService } from "@/lib/syncService";
+
 interface HoldCartDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onLoadCart: (cart: CartItem[], discount: number) => void;
 }
 
-interface HeldCart {
-  id: string;
-  cart_name: string;
-  cart_data: {
-    items: CartItem[];
-    discount: number;
-  };
-  created_at: string;
-}
-
 export const HoldCartDialog = ({ open, onOpenChange, onLoadCart }: HoldCartDialogProps) => {
-  const [heldCarts, setHeldCarts] = useState<HeldCart[]>([]);
+  const [heldCarts, setHeldCarts] = useState<CachedHeldCart[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -39,35 +32,47 @@ export const HoldCartDialog = ({ open, onOpenChange, onLoadCart }: HoldCartDialo
   const fetchHeldCarts = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from("held_carts")
-        .select("*")
-        .order("created_at", { ascending: false });
+      // 1. Fetch from local Dexie database first (works offline)
+      const localCarts = await db.heldCarts.toArray();
+      localCarts.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      setHeldCarts(localCarts);
 
-      if (error) throw error;
-      setHeldCarts((data || []) as unknown as HeldCart[]);
+      // 2. If online, fetch latest from cloud and cache
+      if (navigator.onLine) {
+        const { data, error } = await supabase
+          .from("held_carts")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (!error && data && data.length > 0) {
+          await db.heldCarts.bulkPut(
+            data.map((c: any) => ({
+              ...c,
+              lastModified: new Date(c.created_at).getTime(),
+              synced: true,
+            }))
+          );
+          const updatedLocal = await db.heldCarts.toArray();
+          updatedLocal.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+          setHeldCarts(updatedLocal);
+        }
+      }
     } catch (error: any) {
       console.error("Error loading held carts:", error);
-      toast.error("Error loading held carts");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleLoadCart = (cart: HeldCart) => {
-    onLoadCart(cart.cart_data.items, cart.cart_data.discount);
+  const handleLoadCart = (cart: CachedHeldCart) => {
+    onLoadCart(cart.cart_data.items, cart.cart_data.discount || 0);
     toast.success(`Loaded: ${cart.cart_name}`);
     onOpenChange(false);
   };
 
   const handleDeleteCart = async (id: string) => {
     try {
-      const { error } = await supabase
-        .from("held_carts")
-        .delete()
-        .eq("id", id);
-
-      if (error) throw error;
+      await syncService.queueOperation('heldCarts', 'delete', { id });
       toast.success("Held cart deleted");
       fetchHeldCarts();
     } catch (error: any) {

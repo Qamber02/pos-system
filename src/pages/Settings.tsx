@@ -41,6 +41,8 @@ const Settings = () => {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [updatingAccount, setUpdatingAccount] = useState(false);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState("");
 
   useEffect(() => {
     checkAuth();
@@ -554,11 +556,9 @@ const Settings = () => {
                 </div>
                 <Button
                   variant="destructive"
-                  onClick={async () => {
-                    if (confirm("Are you sure? This will clear all local data and reload the page.")) {
-                      await db.delete();
-                      window.location.reload();
-                    }
+                  onClick={() => {
+                    setResetConfirmText("");
+                    setResetConfirmOpen(true);
                   }}
                 >
                   Reset Data
@@ -568,6 +568,54 @@ const Settings = () => {
           </Card>
         </main>
       </div>
+
+      {/* Reset Confirmation Safety Modal */}
+      <Dialog open={resetConfirmOpen} onOpenChange={setResetConfirmOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-destructive flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5" />
+              Confirm Database Reset
+            </DialogTitle>
+            <DialogDescription>
+              This will erase all cached offline tables on this device and re-download fresh data from the cloud.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2 text-sm">
+            <p className="text-muted-foreground">
+              To confirm, type <span className="font-bold text-foreground font-mono">RESET</span> below:
+            </p>
+            <Input
+              placeholder="Type RESET to confirm"
+              value={resetConfirmText}
+              onChange={(e) => setResetConfirmText(e.target.value)}
+              className="font-mono text-center tracking-widest uppercase"
+            />
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setResetConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={resetConfirmText !== "RESET"}
+              onClick={async () => {
+                try {
+                  await db.delete();
+                  toast.success("Local cache cleared. Reloading...");
+                  window.location.reload();
+                } catch (err: any) {
+                  toast.error(err.message || "Failed to reset database");
+                }
+              }}
+            >
+              Confirm Wipe & Reload
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

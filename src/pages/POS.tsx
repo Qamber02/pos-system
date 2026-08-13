@@ -19,6 +19,7 @@ import { useOfflineSettings } from "@/hooks/useOfflineSettings";
 import { syncService } from "@/lib/syncService";
 import { CachedHeldCart, db, CachedProduct, CachedProductVariant } from "@/lib/db";
 import { VariantSelector } from "@/components/VariantSelector";
+import { useLiveQuery } from "dexie-react-hooks";
 
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
 
@@ -26,6 +27,7 @@ const POS = () => {
   const navigate = useNavigate();
   // We get the user profile from our hook now
   const { profile } = useUserRole();
+  const heldCarts = useLiveQuery(() => db.heldCarts.toArray()) || [];
 
   // We get settings (including taxRate) from our hook
   const { settings } = useOfflineSettings();
@@ -288,10 +290,15 @@ const POS = () => {
                   variant="ghost"
                   size="sm"
                   onClick={() => setHoldCartOpen(true)}
-                  className="gap-2 h-10 px-4 hover:bg-primary/15 hover:text-primary font-medium transition-[var(--transition-smooth)]"
+                  className="gap-2 h-10 px-4 hover:bg-primary/15 hover:text-primary font-medium transition-[var(--transition-smooth)] relative"
                 >
                   <FolderOpen className="h-5 w-5" />
                   <span className="hidden lg:inline">Held Carts</span>
+                  {heldCarts.length > 0 && (
+                    <span className="bg-primary text-primary-foreground text-xs px-1.5 py-0.5 rounded-full font-bold">
+                      {heldCarts.length}
+                    </span>
+                  )}
                 </Button>
                 <div className="w-px h-7 bg-border/70" />
                 <Button
@@ -317,9 +324,14 @@ const POS = () => {
                   variant="outline"
                   size="sm"
                   onClick={() => setHoldCartOpen(true)}
-                  className="gap-2"
+                  className="gap-2 relative"
                 >
                   <FolderOpen className="h-4 w-4" />
+                  {heldCarts.length > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 bg-primary text-primary-foreground text-[10px] h-4 w-4 rounded-full flex items-center justify-center font-bold">
+                      {heldCarts.length}
+                    </span>
+                  )}
                 </Button>
                 <Button
                   variant="outline"

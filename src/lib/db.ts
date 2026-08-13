@@ -69,6 +69,7 @@ export interface CachedCustomer {
   email?: string;
   phone?: string;
   address?: string;
+  notes?: string | null;
   user_id: string;
   synced: boolean;
   lastModified: number;
@@ -197,6 +198,7 @@ export interface CachedRepairTicket {
   device_name: string;
   serial_or_imei?: string | null;
   issue_description: string;
+  repair_type?: 'hardware' | 'software';
   estimated_cost?: number | null;
   deposit_paid?: number | null;
   status: RepairStatus;

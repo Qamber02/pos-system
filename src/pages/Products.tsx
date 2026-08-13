@@ -170,28 +170,58 @@ const Products = () => {
         toast.success("Product created");
       }
 
-      // Save Variants
-      if (variants.length > 0 && productId) {
-        for (const variant of variants) {
-          const variantData = {
-            id: crypto.randomUUID(),
-            product_id: productId,
-            variant_name: variant.name,
-            sku: variant.sku || null,
-            price_adjustment: parseFloat(variant.price_adjustment) || 0,
-            stock_quantity: parseInt(variant.stock_quantity) || 0,
-            is_active: true,
-            is_serialized: productForm.is_serialized,
-            condition_grade: productForm.condition_grade,
-            user_id: user.id,
-            synced: false,
-            lastModified: Date.now(),
-            updated_at: new Date().toISOString()
-          };
-
-          await syncService.queueOperation('productVariants', 'insert', variantData);
+      // Save / Update Variants
+      if (productId) {
+        const existingVariants = await db.productVariants.where('product_id').equals(productId).toArray();
+        
+        // Remove variants that were deleted in the UI
+        for (const ev of existingVariants) {
+          if (!variants.some(v => v.id === ev.id)) {
+            await syncService.queueOperation('productVariants', 'delete', { id: ev.id });
+          }
         }
-        toast.success(`${variants.length} variants saved`);
+
+        // Add or Update current variants
+        for (const variant of variants) {
+          const isExisting = existingVariants.some(ev => ev.id === variant.id);
+          
+          if (isExisting) {
+            const currentEv = existingVariants.find(ev => ev.id === variant.id)!;
+            const updatedVariant = {
+              ...currentEv,
+              variant_name: variant.name,
+              sku: variant.sku || null,
+              price_adjustment: parseFloat(variant.price_adjustment) || 0,
+              stock_quantity: parseInt(variant.stock_quantity) || 0,
+              is_serialized: productForm.is_serialized,
+              condition_grade: productForm.condition_grade,
+              lastModified: Date.now(),
+              synced: false,
+              updated_at: new Date().toISOString()
+            };
+            await syncService.queueOperation('productVariants', 'update', updatedVariant);
+          } else {
+            const variantData = {
+              id: variant.id || crypto.randomUUID(),
+              product_id: productId,
+              variant_name: variant.name,
+              sku: variant.sku || null,
+              price_adjustment: parseFloat(variant.price_adjustment) || 0,
+              stock_quantity: parseInt(variant.stock_quantity) || 0,
+              is_active: true,
+              is_serialized: productForm.is_serialized,
+              condition_grade: productForm.condition_grade,
+              user_id: user.id,
+              synced: false,
+              lastModified: Date.now(),
+              updated_at: new Date().toISOString()
+            };
+            await syncService.queueOperation('productVariants', 'insert', variantData);
+          }
+        }
+        if (variants.length > 0) {
+          toast.success(`${variants.length} variants updated`);
+        }
       }
 
       setProductDialog(false);
@@ -292,7 +322,7 @@ const Products = () => {
     }
   };
 
-  const openProductDialog = (product?: CachedProduct) => {
+  const openProductDialog = async (product?: CachedProduct) => {
     if (product) {
       setEditingProduct(product);
       setProductForm({
@@ -308,6 +338,20 @@ const Products = () => {
         is_repair_part: product.is_repair_part || false,
         condition_grade: product.condition_grade || "new",
       });
+      // Load existing variants for this product
+      try {
+        const existingVariants = await db.productVariants.where('product_id').equals(product.id).toArray();
+        setVariants(existingVariants.map(v => ({
+          id: v.id,
+          name: v.variant_name,
+          sku: v.sku || "",
+          price_adjustment: v.price_adjustment.toString(),
+          stock_quantity: v.stock_quantity.toString()
+        })));
+      } catch (err) {
+        console.error("Failed to load variants:", err);
+        setVariants([]);
+      }
     } else {
       resetProductForm();
     }
@@ -822,77 +866,76 @@ const Products = () => {
             </div>
 
             {/* Variants Section */}
-            {!editingProduct && (
-              <div className="border-t pt-4 mt-4">
-                <div className="flex items-center justify-between mb-4">
-                  <Label className="text-base font-semibold flex items-center gap-2">
-                    <Layers className="h-4 w-4" />
-                    Variants (Optional)
-                  </Label>
-                </div>
-
-                <div className="bg-muted/30 p-4 rounded-lg space-y-4">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-2">
-                      <Label>Variant Name</Label>
-                      <Input
-                        placeholder="e.g. Red, XL"
-                        value={variantForm.name}
-                        onChange={e => setVariantForm({ ...variantForm, name: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>SKU</Label>
-                      <Input
-                        placeholder="Optional"
-                        value={variantForm.sku}
-                        onChange={e => setVariantForm({ ...variantForm, sku: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Price Adjustment (+/-)</Label>
-                      <Input
-                        type="number"
-                        value={variantForm.price_adjustment}
-                        onChange={e => setVariantForm({ ...variantForm, price_adjustment: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Stock</Label>
-                      <Input
-                        type="number"
-                        value={variantForm.stock_quantity}
-                        onChange={e => setVariantForm({ ...variantForm, stock_quantity: e.target.value })}
-                      />
-                    </div>
-                  </div>
-                  <Button type="button" onClick={handleAddVariant} variant="secondary" className="w-full">
-                    <Plus className="h-4 w-4 mr-2" /> Add Variant
-                  </Button>
-                </div>
-
-                {variants.length > 0 && (
-                  <div className="mt-4 space-y-2">
-                    <Label>Added Variants</Label>
-                    <div className="border rounded-md divide-y">
-                      {variants.map((v) => (
-                        <div key={v.id} className="p-3 flex justify-between items-center text-sm">
-                          <div>
-                            <span className="font-medium">{v.name}</span>
-                            <span className="text-muted-foreground ml-2">
-                              ({v.stock_quantity} in stock, {parseFloat(v.price_adjustment) > 0 ? '+' : ''}{formatPrice(v.price_adjustment)})
-                            </span>
-                          </div>
-                          <Button variant="ghost" size="sm" onClick={() => handleRemoveVariant(v.id)}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+            <div className="border-t pt-4 mt-4">
+              <div className="flex items-center justify-between mb-4">
+                <Label className="text-base font-semibold flex items-center gap-2">
+                  <Layers className="h-4 w-4" />
+                  Variants (Optional)
+                </Label>
               </div>
-            )}
+
+              <div className="bg-muted/30 p-4 rounded-lg space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Variant Name</Label>
+                    <Input
+                      placeholder="e.g. Red, XL"
+                      value={variantForm.name}
+                      onChange={e => setVariantForm({ ...variantForm, name: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>SKU</Label>
+                    <Input
+                      placeholder="Optional"
+                      value={variantForm.sku}
+                      onChange={e => setVariantForm({ ...variantForm, sku: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Price Adjustment (+/-)</Label>
+                    <Input
+                      type="number"
+                      value={variantForm.price_adjustment}
+                      onChange={e => setVariantForm({ ...variantForm, price_adjustment: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Stock</Label>
+                    <Input
+                      type="number"
+                      value={variantForm.stock_quantity}
+                      onChange={e => setVariantForm({ ...variantForm, stock_quantity: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <Button type="button" onClick={handleAddVariant} variant="secondary" className="w-full">
+                  <Plus className="h-4 w-4 mr-2" /> Add Variant
+                </Button>
+              </div>
+
+              {variants.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  <Label>Added Variants</Label>
+                  <div className="border rounded-md divide-y">
+                    {variants.map((v) => (
+                      <div key={v.id} className="p-3 flex justify-between items-center text-sm">
+                        <div>
+                          <span className="font-medium">{v.name}</span>
+                          <span className="text-muted-foreground ml-2">
+                            ({v.stock_quantity} in stock, {parseFloat(v.price_adjustment) > 0 ? '+' : ''}{formatPrice(v.price_adjustment)})
+                          </span>
+                        </div>
+                        <Button variant="ghost" size="sm" onClick={() => handleRemoveVariant(v.id)}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <DialogFooter>
               <Button variant="outline" onClick={() => setProductDialog(false)}>
                 Cancel

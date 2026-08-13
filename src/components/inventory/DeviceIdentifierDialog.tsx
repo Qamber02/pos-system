@@ -73,6 +73,36 @@ export const DeviceIdentifierDialog = ({ open, onOpenChange, products, variants 
       };
 
       await syncService.queueOperation('deviceIdentifiers', 'insert', deviceData);
+
+      // Increment stock for in_stock serialized items
+      if (status === 'in_stock') {
+        const product = products.find(p => p.id === selectedProductId);
+        if (product) {
+          const updatedProduct = {
+            ...product,
+            stock_quantity: product.stock_quantity + 1,
+            lastModified: Date.now(),
+            synced: false,
+            updated_at: new Date().toISOString()
+          };
+          await syncService.queueOperation('products', 'update', updatedProduct);
+        }
+
+        if (selectedVariantId) {
+          const variant = variants.find(v => v.id === selectedVariantId);
+          if (variant) {
+            const updatedVariant = {
+              ...variant,
+              stock_quantity: variant.stock_quantity + 1,
+              lastModified: Date.now(),
+              synced: false,
+              updated_at: new Date().toISOString()
+            };
+            await syncService.queueOperation('productVariants', 'update', updatedVariant);
+          }
+        }
+      }
+
       toast.success("Device identifier registered successfully");
       resetForm();
       onOpenChange(false);

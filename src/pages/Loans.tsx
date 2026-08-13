@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label';
 import { LoanDialog } from '@/components/LoanDialog';
 import { useOfflineLoans } from '@/hooks/useOfflineLoans';
 import { useOfflineCustomers } from '@/hooks/useOfflineCustomers';
-import { Plus, DollarSign, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import { Plus, DollarSign, AlertCircle, CheckCircle, Loader2, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { useFormatCurrency } from '@/hooks/useFormatCurrency';
@@ -29,7 +29,7 @@ const Loans = () => {
     const [paymentAmount, setPaymentAmount] = useState('');
     const formatPrice = useFormatCurrency();
 
-    const { loans, loading, recordPayment } = useOfflineLoans(customerFilter === 'all' ? undefined : customerFilter, statusFilter);
+    const { loans, loading, recordPayment, deleteLoan } = useOfflineLoans(customerFilter === 'all' ? undefined : customerFilter, statusFilter);
     const { customers } = useOfflineCustomers('');
 
     useEffect(() => {
@@ -214,7 +214,7 @@ const Loans = () => {
                                                         {loan.due_date ? format(new Date(loan.due_date), 'MMM dd, yyyy') : '-'}
                                                     </TableCell>
                                                     <TableCell>{getStatusBadge(loan.status)}</TableCell>
-                                                    <TableCell className="text-right">
+                                                    <TableCell className="text-right space-x-1">
                                                         {loan.status !== 'paid' && (
                                                             <Button
                                                                 variant="outline"
@@ -225,6 +225,23 @@ const Loans = () => {
                                                                 Record Payment
                                                             </Button>
                                                         )}
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10"
+                                                            onClick={async () => {
+                                                                if (confirm("Delete this loan record?")) {
+                                                                    try {
+                                                                        await deleteLoan(loan.id);
+                                                                        toast.success("Loan record deleted");
+                                                                    } catch (err: any) {
+                                                                        toast.error(err.message || "Failed to delete loan");
+                                                                    }
+                                                                }
+                                                            }}
+                                                        >
+                                                            <Trash2 className="h-4 w-4" />
+                                                        </Button>
                                                     </TableCell>
                                                 </TableRow>
                                             );

@@ -99,6 +99,7 @@ class SyncService {
         () => this.syncCategories(user.id, force),
         () => this.syncCustomers(user.id, force),
         () => this.syncSettings(user.id, force),
+        () => this.syncWholesalers(user.id, force),
         () => this.syncProductVariants(user.id, force),
         () => this.syncLoans(user.id, force),
         () => this.syncDeviceIdentifiers(user.id, force),
@@ -106,7 +107,11 @@ class SyncService {
         () => this.syncRepairTickets(user.id, force),
         () => this.syncRepairTicketHistory(user.id, force),
         () => this.syncTechnicians(user.id, force),
-        () => this.syncRepairTicketParts(user.id, force)
+        () => this.syncRepairTicketParts(user.id, force),
+        () => this.syncWholesalerIntakes(user.id, force),
+        () => this.syncWholesalerPayments(user.id, force),
+        () => this.syncRefunds(user.id, force),
+        () => this.syncHeldCarts(user.id, force)
       ];
 
       for (const task of pullTasks) {
@@ -469,6 +474,127 @@ class SyncService {
     } catch (error) { console.error('Failed to sync repair ticket parts:', error); }
   }
 
+  private async syncWholesalers(userId: string, force: boolean) {
+    try {
+      const lastLocal = await db.wholesalers.orderBy('lastModified').last();
+      const lastModifiedTime = force ? 0 : (lastLocal ? lastLocal.lastModified + 1 : 0);
+
+      const { data, error } = await supabase
+        .from('wholesalers')
+        .select('id, user_id, name, contact_person, phone, email, address, notes, updated_at')
+        .eq('user_id', userId)
+        .gt('updated_at', new Date(lastModifiedTime).toISOString());
+
+      if (error) throw error;
+      if (data && data.length > 0) {
+        console.log(`Syncing ${data.length} new/updated wholesalers...`);
+        await db.wholesalers.bulkPut(
+          data.map((w: any) => ({
+            ...w,
+            lastModified: new Date(w.updated_at).getTime(),
+            synced: true,
+          }))
+        );
+      }
+    } catch (error) { console.error('Failed to sync wholesalers:', error); }
+  }
+
+  private async syncWholesalerIntakes(userId: string, force: boolean) {
+    try {
+      const lastLocal = await db.wholesalerIntakes.orderBy('lastModified').last();
+      const lastModifiedTime = force ? 0 : (lastLocal ? lastLocal.lastModified + 1 : 0);
+
+      const { data, error } = await supabase
+        .from('wholesaler_intakes')
+        .select('id, user_id, wholesaler_id, product_id, item_name, quantity, agreed_unit_cost, total_cost, amount_paid, intake_date, status, notes, updated_at')
+        .eq('user_id', userId)
+        .gt('updated_at', new Date(lastModifiedTime).toISOString());
+
+      if (error) throw error;
+      if (data && data.length > 0) {
+        console.log(`Syncing ${data.length} new/updated wholesaler intakes...`);
+        await db.wholesalerIntakes.bulkPut(
+          data.map((wi: any) => ({
+            ...wi,
+            lastModified: new Date(wi.updated_at).getTime(),
+            synced: true,
+          }))
+        );
+      }
+    } catch (error) { console.error('Failed to sync wholesaler intakes:', error); }
+  }
+
+  private async syncWholesalerPayments(userId: string, force: boolean) {
+    try {
+      const lastLocal = await db.wholesalerPayments.orderBy('lastModified').last();
+      const lastModifiedTime = force ? 0 : (lastLocal ? lastLocal.lastModified + 1 : 0);
+
+      const { data, error } = await supabase
+        .from('wholesaler_payments')
+        .select('id, user_id, wholesaler_id, intake_id, amount, payment_method, payment_date, notes, created_at')
+        .eq('user_id', userId)
+        .gt('created_at', new Date(lastModifiedTime).toISOString());
+
+      if (error) throw error;
+      if (data && data.length > 0) {
+        console.log(`Syncing ${data.length} new/updated wholesaler payments...`);
+        await db.wholesalerPayments.bulkPut(
+          data.map((wp: any) => ({
+            ...wp,
+            lastModified: new Date(wp.created_at).getTime(),
+            synced: true,
+          }))
+        );
+      }
+    } catch (error) { console.error('Failed to sync wholesaler payments:', error); }
+  }
+
+  private async syncRefunds(userId: string, force: boolean) {
+    try {
+      const lastLocal = await db.refunds.orderBy('lastModified').last();
+      const lastModifiedTime = force ? 0 : (lastLocal ? lastLocal.lastModified + 1 : 0);
+
+      const { data, error } = await supabase
+        .from('refunds')
+        .select('id, user_id, sale_id, repair_ticket_id, refund_number, amount, refund_type, payment_method, reason, restock_item, processed_by, notes, created_at')
+        .eq('user_id', userId)
+        .gt('created_at', new Date(lastModifiedTime).toISOString());
+
+      if (error) throw error;
+      if (data && data.length > 0) {
+        console.log(`Syncing ${data.length} new/updated refunds...`);
+        await db.refunds.bulkPut(
+          data.map((r: any) => ({
+            ...r,
+            lastModified: new Date(r.created_at).getTime(),
+            synced: true,
+          }))
+        );
+      }
+    } catch (error) { console.error('Failed to sync refunds:', error); }
+  }
+
+  private async syncHeldCarts(userId: string, force: boolean) {
+    try {
+      const { data, error } = await supabase
+        .from('held_carts')
+        .select('id, user_id, cart_name, cart_data, created_at')
+        .eq('user_id', userId);
+
+      if (error) throw error;
+      if (data && data.length > 0) {
+        console.log(`Syncing ${data.length} held carts...`);
+        await db.heldCarts.bulkPut(
+          data.map((c: any) => ({
+            ...c,
+            lastModified: new Date(c.created_at).getTime(),
+            synced: true,
+          }))
+        );
+      }
+    } catch (error) { console.error('Failed to sync held carts:', error); }
+  }
+
   // --- SYNC QUEUE PROCESSING ---
 
   private async processSyncQueue() {
@@ -491,16 +617,21 @@ class SyncService {
       'customers': 1,
       'categories': 1,
       'settings': 1,
-      'technicians': 1,     // Independent
-      'productVariants': 2, // Depends on products
-      'deviceIdentifiers': 2, // Depends on products/customers
-      'partCompatibility': 2, // Depends on products
-      'repairTickets': 3,   // Depends on customers/deviceIdentifiers
-      'sales': 3,           // Depends on customers
-      'repairTicketHistory': 4, // Depends on repairTickets
-      'repairTicketParts': 4,   // Depends on repairTickets AND products
-      'saleItems': 4,       // Depends on sales AND products
-      'loans': 4            // Depends on customers
+      'technicians': 1,
+      'wholesalers': 1,
+      'heldCarts': 1,
+      'productVariants': 2,
+      'deviceIdentifiers': 2,
+      'partCompatibility': 2,
+      'wholesalerIntakes': 2,
+      'repairTickets': 3,
+      'sales': 3,
+      'wholesalerPayments': 3,
+      'repairTicketHistory': 4,
+      'repairTicketParts': 4,
+      'saleItems': 4,
+      'loans': 4,
+      'refunds': 4
     };
 
     pendingItems.sort((a, b) => {
@@ -576,6 +707,9 @@ class SyncService {
       const priceToUse = dataForSupabase.total_price ?? dataForSupabase.subtotal ?? ((dataForSupabase.unit_price || 0) * (dataForSupabase.quantity || 1));
       dataForSupabase.subtotal = priceToUse;
       dataForSupabase.total_price = priceToUse;
+      if (dataForSupabase.product_id === '00000000-0000-0000-0000-000000000000') {
+        dataForSupabase.product_id = null;
+      }
       delete dataForSupabase.variant_name;
       delete dataForSupabase.user_id;
     }

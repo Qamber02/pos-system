@@ -12,7 +12,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CalendarIcon, Eye, FileSpreadsheet, Wrench, Truck, RotateCcw, ShoppingBag, DollarSign, TrendingUp } from "lucide-react";
+import { CalendarIcon, Eye, FileSpreadsheet, Wrench, Truck, RotateCcw, ShoppingBag, DollarSign, TrendingUp, Cpu, Code } from "lucide-react";
 import ExcelJS from 'exceljs';
 import { format, startOfMonth, endOfMonth } from "date-fns";
 import { toast } from "sonner";
@@ -53,11 +53,12 @@ const Reports = () => {
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
 
-  // Live queries for Repairs, Wholesalers, and Refunds
+  // Live queries for Repairs, Wholesalers, Payments, and Refunds
   const repairTickets = useLiveQuery(() => db.repairTickets.toArray()) || [];
   const repairParts = useLiveQuery(() => db.repairTicketParts.toArray()) || [];
   const wholesalers = useLiveQuery(() => db.wholesalers.toArray()) || [];
   const wholesalerIntakes = useLiveQuery(() => db.wholesalerIntakes.toArray()) || [];
+  const wholesalerPayments = useLiveQuery(() => db.wholesalerPayments.toArray()) || [];
   const refunds = useLiveQuery(() => db.refunds.toArray()) || [];
   const customers = useLiveQuery(() => db.customers.toArray()) || [];
 
@@ -82,24 +83,55 @@ const Reports = () => {
 
   const fetchSales = async () => {
     try {
-      const { data, error } = await supabase
-        .from("sales")
-        .select(`
-          *,
-          customers(name),
-          sale_items(
-            product_name,
-            quantity,
-            unit_price,
-            subtotal
-          )
-        `)
-        .order("created_at", { ascending: false });
+      // 1. Fetch from local Dexie database first (works offline)
+      const localSales = await db.sales.toArray();
+      const localSaleItems = await db.saleItems.toArray();
+      const localCustomers = await db.customers.toArray();
+      const custMap = new Map(localCustomers.map(c => [c.id, c.name]));
 
-      if (error) throw error;
-      setSales((data as any) || []);
-    } catch {
-      toast.error("Error loading sales");
+      const localCombined: Sale[] = localSales.map(s => {
+        const items = localSaleItems.filter(i => i.sale_id === s.id);
+        return {
+          id: s.id,
+          receipt_number: s.receipt_number,
+          created_at: s.created_at || new Date(s.lastModified).toISOString(),
+          total_amount: s.total_amount,
+          subtotal: s.subtotal,
+          payment_method: s.payment_method || 'cash',
+          customers: s.customer_id ? { name: custMap.get(s.customer_id) || 'Customer' } : null,
+          sale_items: items.map(i => ({
+            product_name: i.product_name,
+            quantity: i.quantity,
+            unit_price: i.unit_price,
+            subtotal: i.subtotal
+          }))
+        };
+      });
+      localCombined.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      setSales(localCombined);
+
+      // 2. Fetch from Supabase cloud if online
+      if (navigator.onLine) {
+        const { data, error } = await supabase
+          .from("sales")
+          .select(`
+            *,
+            customers(name),
+            sale_items(
+              product_name,
+              quantity,
+              unit_price,
+              subtotal
+            )
+          `)
+          .order("created_at", { ascending: false });
+
+        if (!error && data && data.length > 0) {
+          setSales((data as any) || []);
+        }
+      }
+    } catch (err) {
+      console.error("Error loading sales in reports:", err);
     }
   };
 
@@ -147,11 +179,27 @@ const Reports = () => {
     return true;
   });
 
+  const filteredPayments = wholesalerPayments.filter(p => {
+    const d = new Date(p.payment_date || p.created_at || Date.now());
+    if (startDate && d < new Date(startDate.setHours(0,0,0,0))) return false;
+    if (endDate && d > new Date(endDate.setHours(23,59,59,999))) return false;
+    return true;
+  });
+
   // Comprehensive Financial Totals
   const totalSalesRevenue = filteredSales.reduce((sum, sale) => sum + Number(sale.total_amount || 0), 0);
   const totalRepairRevenue = filteredRepairs.reduce((sum, t) => sum + (t.estimated_cost || 0), 0);
   const totalWholesalerCost = filteredIntakes.reduce((sum, i) => sum + (i.total_cost || 0), 0);
   const totalRefundsAmount = filteredRefunds.reduce((sum, r) => sum + (r.amount || 0), 0);
+
+  // Cash Drawer & Payment Methods Reconciliation
+  const cashSales = filteredSales.filter(s => (s.payment_method || 'cash').toLowerCase() === 'cash').reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
+  const cardSales = filteredSales.filter(s => (s.payment_method || '').toLowerCase() === 'card').reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
+  const otherSales = filteredSales.filter(s => !['cash', 'card'].includes((s.payment_method || '').toLowerCase())).reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
+
+  const cashRefunds = filteredRefunds.filter(r => (r.payment_method || 'cash').toLowerCase() === 'cash').reduce((sum, r) => sum + (r.amount || 0), 0);
+  const cashWholesalerPayouts = filteredPayments.filter(p => (p.payment_method || 'cash').toLowerCase() === 'cash').reduce((sum, p) => sum + (p.amount || 0), 0);
+  const netDrawerCashFlow = cashSales - cashRefunds - cashWholesalerPayouts;
 
   // Estimated POS Sales Cost (Assuming 60% cost / 40% margin for products)
   const totalSalesCost = filteredSales.reduce((sum, sale) => sum + Number(sale.subtotal || 0) * 0.6, 0);
@@ -386,6 +434,7 @@ const Reports = () => {
 
         return [
           t.ticket_number,
+          t.repair_type === 'software' ? 'SOFTWARE' : 'HARDWARE',
           format(new Date(t.created_at || Date.now()), "yyyy-MM-dd HH:mm"),
           t.device_name,
           customerMap.get(t.customer_id || "") || "Walk-in Customer",
@@ -399,10 +448,10 @@ const Reports = () => {
       buildStyledSheet(
         "Repair Jobs Report",
         "REPAIR TICKETS, PARTS COST & PROFIT RECORD",
-        ["Ticket #", "Date & Time", "Device Name", "Customer", "Status", "Customer Charge (PKR)", "Wholesaler Part Cost (PKR)", "Net Repair Profit (PKR)"],
+        ["Ticket #", "Type", "Date & Time", "Device Name", "Customer", "Status", "Customer Charge (PKR)", "Wholesaler Part Cost (PKR)", "Net Repair Profit (PKR)"],
         repairDataRows,
-        ['text', 'text', 'text', 'text', 'text', 'currency', 'currency', 'currency'],
-        ["TOTALS", "", "", "", "", totalRepairRevenue, totalWholesalerCost, repairProfit]
+        ['text', 'text', 'text', 'text', 'text', 'text', 'currency', 'currency', 'currency'],
+        ["TOTALS", "", "", "", "", "", totalRepairRevenue, totalWholesalerCost, repairProfit]
       );
 
       // 4. WHOLESALER CONSIGNMENT SHEET
@@ -602,6 +651,7 @@ const Reports = () => {
           <Tabs value={reportTab} onValueChange={setReportTab} className="space-y-4">
             <TabsList>
               <TabsTrigger value="overview">Executive Overview</TabsTrigger>
+              <TabsTrigger value="drawer">Drawer & Payment Reconciliation</TabsTrigger>
               <TabsTrigger value="repairs">Repair Jobs ({filteredRepairs.length})</TabsTrigger>
               <TabsTrigger value="wholesalers">Wholesaler Intakes ({filteredIntakes.length})</TabsTrigger>
               <TabsTrigger value="refunds">Refunds Log ({filteredRefunds.length})</TabsTrigger>
@@ -633,6 +683,90 @@ const Reports = () => {
               </div>
             </TabsContent>
 
+            {/* Tab: Drawer & Payment Reconciliation */}
+            <TabsContent value="drawer">
+              <div className="grid gap-4 md:grid-cols-3">
+                <Card className="bg-emerald-50/30 dark:bg-emerald-950/20 border-emerald-200">
+                  <CardHeader className="pb-2">
+                    <CardDescription className="text-xs uppercase font-semibold text-emerald-800 dark:text-emerald-300">
+                      Cash Inflows (Sales)
+                    </CardDescription>
+                    <CardTitle className="text-2xl text-emerald-600 font-bold">{formatPrice(cashSales)}</CardTitle>
+                    <p className="text-xs text-muted-foreground">{filteredSales.filter(s => (s.payment_method || 'cash').toLowerCase() === 'cash').length} Cash Transactions</p>
+                  </CardHeader>
+                </Card>
+
+                <Card className="bg-rose-50/30 dark:bg-rose-950/20 border-rose-200">
+                  <CardHeader className="pb-2">
+                    <CardDescription className="text-xs uppercase font-semibold text-rose-800 dark:text-rose-300">
+                      Cash Outflows (Refunds & Payouts)
+                    </CardDescription>
+                    <CardTitle className="text-2xl text-rose-600 font-bold">-{formatPrice(cashRefunds + cashWholesalerPayouts)}</CardTitle>
+                    <p className="text-xs text-muted-foreground">Refunds: {formatPrice(cashRefunds)} | Supplier Payouts: {formatPrice(cashWholesalerPayouts)}</p>
+                  </CardHeader>
+                </Card>
+
+                <Card className="bg-primary/5 border-primary/20">
+                  <CardHeader className="pb-2">
+                    <CardDescription className="text-xs uppercase font-semibold text-primary">
+                      Net Physical Cash Movement
+                    </CardDescription>
+                    <CardTitle className={`text-2xl font-extrabold ${netDrawerCashFlow >= 0 ? 'text-primary' : 'text-rose-600'}`}>
+                      {formatPrice(netDrawerCashFlow)}
+                    </CardTitle>
+                    <p className="text-xs text-muted-foreground">Expected change in physical cash drawer</p>
+                  </CardHeader>
+                </Card>
+              </div>
+
+              <Card className="mt-4">
+                <CardHeader>
+                  <CardTitle className="text-base">Payment Method Breakdown</CardTitle>
+                  <CardDescription className="text-xs">Summary of transactions across Cash, Credit Card, and other tender types.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Payment Method</TableHead>
+                        <TableHead>Transaction Count</TableHead>
+                        <TableHead>Gross Inflow</TableHead>
+                        <TableHead>Refunds / Outflows</TableHead>
+                        <TableHead className="text-right">Net Received</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      <TableRow>
+                        <TableCell className="font-semibold">Cash (Drawer)</TableCell>
+                        <TableCell>{filteredSales.filter(s => (s.payment_method || 'cash').toLowerCase() === 'cash').length} sales</TableCell>
+                        <TableCell className="text-emerald-600 font-semibold">{formatPrice(cashSales)}</TableCell>
+                        <TableCell className="text-rose-600">-{formatPrice(cashRefunds + cashWholesalerPayouts)}</TableCell>
+                        <TableCell className="text-right font-bold text-primary">{formatPrice(netDrawerCashFlow)}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell className="font-semibold">Credit / Debit Card</TableCell>
+                        <TableCell>{filteredSales.filter(s => (s.payment_method || '').toLowerCase() === 'card').length} sales</TableCell>
+                        <TableCell className="text-emerald-600 font-semibold">{formatPrice(cardSales)}</TableCell>
+                        <TableCell className="text-rose-600">-{formatPrice(filteredRefunds.filter(r => r.payment_method === 'card').reduce((s, r) => s + (r.amount || 0), 0))}</TableCell>
+                        <TableCell className="text-right font-bold text-primary">
+                          {formatPrice(cardSales - filteredRefunds.filter(r => r.payment_method === 'card').reduce((s, r) => s + (r.amount || 0), 0))}
+                        </TableCell>
+                      </TableRow>
+                      {otherSales > 0 && (
+                        <TableRow>
+                          <TableCell className="font-semibold">Other Methods</TableCell>
+                          <TableCell>{filteredSales.filter(s => !['cash', 'card'].includes((s.payment_method || '').toLowerCase())).length} sales</TableCell>
+                          <TableCell className="text-emerald-600 font-semibold">{formatPrice(otherSales)}</TableCell>
+                          <TableCell className="text-rose-600">-</TableCell>
+                          <TableCell className="text-right font-bold text-primary">{formatPrice(otherSales)}</TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
             {/* Tab 2: Repair Jobs Report */}
             <TabsContent value="repairs">
               <Card>
@@ -646,6 +780,7 @@ const Reports = () => {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Ticket #</TableHead>
+                        <TableHead>Type</TableHead>
                         <TableHead>Date</TableHead>
                         <TableHead>Device & Model</TableHead>
                         <TableHead>Customer</TableHead>
@@ -665,6 +800,16 @@ const Reports = () => {
                         return (
                           <TableRow key={ticket.id}>
                             <TableCell className="font-mono font-bold text-primary text-xs">{ticket.ticket_number}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className={`text-[10px] px-1.5 py-0.5 inline-flex items-center gap-1 font-semibold ${
+                                ticket.repair_type === 'software'
+                                  ? 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/50 dark:text-indigo-300 dark:border-indigo-800'
+                                  : 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/50 dark:text-blue-300 dark:border-blue-800'
+                              }`}>
+                                {ticket.repair_type === 'software' ? <Code className="h-2.5 w-2.5 text-indigo-600" /> : <Cpu className="h-2.5 w-2.5 text-blue-600" />}
+                                {ticket.repair_type === 'software' ? 'Software' : 'Hardware'}
+                              </Badge>
+                            </TableCell>
                             <TableCell className="text-xs">{new Date(ticket.created_at || Date.now()).toLocaleDateString()}</TableCell>
                             <TableCell className="font-medium text-xs">{ticket.device_name}</TableCell>
                             <TableCell className="text-xs">{customerMap.get(ticket.customer_id || "") || "Walk-in Customer"}</TableCell>

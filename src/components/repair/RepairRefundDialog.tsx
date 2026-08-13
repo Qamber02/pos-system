@@ -91,6 +91,41 @@ export const RepairRefundDialog = ({
         await syncService.queueOperation('repairTickets', 'update', updatedTicket);
       }
 
+      // 2b. If it's a product return and restock is requested, restore stock to db.products
+      if (refundType === 'product' && restockItem) {
+        const ticketParts = await db.repairTicketParts
+          .where('repair_ticket_id')
+          .equals(ticket.id)
+          .toArray();
+
+        for (const tp of ticketParts) {
+          if (tp.product_id && tp.status !== 'returned') {
+            const product = await db.products.get(tp.product_id);
+            if (product) {
+              const updatedProd = {
+                ...product,
+                stock_quantity: product.stock_quantity + tp.quantity,
+                lastModified: nowTimestamp,
+                synced: false,
+                updated_at: nowIso
+              };
+              await syncService.queueOperation('products', 'update', updatedProd);
+
+              const updatedPart = {
+                ...tp,
+                status: 'returned' as const,
+                status_reason: `Restocked via refund ${refundNum}`,
+                status_updated_at: nowIso,
+                lastModified: nowTimestamp,
+                synced: false,
+                updated_at: nowIso
+              };
+              await syncService.queueOperation('repairTicketParts', 'update', updatedPart);
+            }
+          }
+        }
+      }
+
       // 3. Log into ticket history audit
       const historyEntry = {
         id: crypto.randomUUID(),

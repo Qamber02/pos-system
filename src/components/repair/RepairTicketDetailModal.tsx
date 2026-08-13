@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Clock, Smartphone, User, DollarSign, ArrowRight, CheckCircle2, AlertCircle, Wrench, ShieldAlert, UserCheck } from "lucide-react";
+import { Clock, Smartphone, User, DollarSign, ArrowRight, CheckCircle2, AlertCircle, Wrench, ShieldAlert, UserCheck, Cpu, Code } from "lucide-react";
 import { toast } from "sonner";
 import { syncService } from "@/lib/syncService";
 import { db, CachedCustomer, CachedRepairTicket, CachedRepairTicketHistory, CachedTechnician, RepairStatus } from "@/lib/db";
@@ -214,9 +214,19 @@ export const RepairTicketDetailModal = ({
                 Created on {new Date(ticket.created_at || Date.now()).toLocaleDateString()}
               </DialogDescription>
             </div>
-            <Badge className={`${statusColorMap[ticket.status]} text-sm px-3 py-1 border-none capitalize`}>
-              {ticket.status.replace('_', ' ')}
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className={`text-xs px-2.5 py-1 flex items-center gap-1.5 font-semibold ${
+                ticket.repair_type === 'software'
+                  ? 'bg-indigo-50 text-indigo-700 border-indigo-300 dark:bg-indigo-950/50 dark:text-indigo-300 dark:border-indigo-800'
+                  : 'bg-primary/10 text-primary border-primary/30'
+              }`}>
+                {ticket.repair_type === 'software' ? <Code className="h-3.5 w-3.5 text-indigo-600" /> : <Cpu className="h-3.5 w-3.5 text-primary" />}
+                {ticket.repair_type === 'software' ? 'Software Service' : 'Hardware Repair'}
+              </Badge>
+              <Badge className={`${statusColorMap[ticket.status]} text-sm px-3 py-1 border-none capitalize`}>
+                {ticket.status.replace('_', ' ')}
+              </Badge>
+            </div>
           </div>
         </DialogHeader>
 

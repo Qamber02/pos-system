@@ -7,7 +7,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Wrench, Truck, Package, Edit3, List, DollarSign, ShieldCheck, Sparkles } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Wrench, Truck, Package, Edit3, List, ShieldCheck, Sparkles, Cpu, Code, X, PlusCircle, DollarSign, Percent } from "lucide-react";
 import { toast } from "sonner";
 import { syncService } from "@/lib/syncService";
 import { db, CachedCustomer, CachedDeviceIdentifier, CachedRepairTicket, RepairStatus, CachedRepairTicketPart, CachedWholesalerIntake, CachedProduct } from "@/lib/db";
@@ -22,6 +24,24 @@ interface RepairTicketDialogProps {
   ticketToEdit?: CachedRepairTicket | null;
 }
 
+const SOFTWARE_PRESETS = [
+  "OS Reinstall / Flashing",
+  "FRP / Google Account Unlock",
+  "Bootloop / Restart Fix",
+  "Screen Lock / Password Bypass",
+  "Data Backup & Recovery",
+  "Software Bug / Freeze Fix",
+  "Network / SIM Unlock"
+];
+
+const ADDON_PRESETS = [
+  { name: "9D Tempered Glass", defaultPrice: "200", defaultCost: "100" },
+  { name: "UV Screen Protector", defaultPrice: "400", defaultCost: "200" },
+  { name: "Camera Lens Guard", defaultPrice: "150", defaultCost: "50" },
+  { name: "Shockproof Case", defaultPrice: "300", defaultCost: "120" },
+  { name: "Software License Key", defaultPrice: "500", defaultCost: "250" },
+];
+
 export const RepairTicketDialog = ({
   open,
   onOpenChange,
@@ -31,6 +51,10 @@ export const RepairTicketDialog = ({
 }: RepairTicketDialogProps) => {
   const formatCurrency = useFormatCurrency();
   const [loading, setLoading] = useState(false);
+
+  // Repair Type: Hardware (parts + labor) vs Software (flashing/OS/unlocks)
+  const [repairType, setRepairType] = useState<'hardware' | 'software'>('hardware');
+
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
   const [deviceName, setDeviceName] = useState("");
@@ -43,7 +67,7 @@ export const RepairTicketDialog = ({
   const [status, setStatus] = useState<RepairStatus>("received");
   const [notes, setNotes] = useState("");
 
-  // Part & Wholesaler Attachment State
+  // Part & Wholesaler Attachment State (Hardware Repairs)
   const [partSourceMode, setPartSourceMode] = useState<'inventory' | 'custom'>('custom');
   const [attachPartProductId, setAttachPartProductId] = useState<string>("");
   const [customPartName, setCustomPartName] = useState<string>("");
@@ -51,18 +75,20 @@ export const RepairTicketDialog = ({
   const [attachPartQty, setAttachPartQty] = useState<string>("1");
   const [attachPartUnitCost, setAttachPartUnitCost] = useState<string>(""); // Wholesaler Cost (e.g. 1800)
 
-  // Add-on State (e.g., Tempered Glass, Protector)
+  // Add-on State with Dedicated Separate Wholesaler Option & Explicit Toggle
+  const [includeAddon, setIncludeAddon] = useState<boolean>(false);
   const [addonName, setAddonName] = useState<string>("");
-  const [addonPrice, setAddonPrice] = useState<string>(""); // Customer Charge e.g. 200
+  const [addonPrice, setAddonPrice] = useState<string>(""); // Customer Retail Charge e.g. 200
   const [addonSourceMode, setAddonSourceMode] = useState<'shop' | 'wholesaler'>('wholesaler');
-  const [addonWholesalerId, setAddonWholesalerId] = useState<string>("");
-  const [addonUnitCost, setAddonUnitCost] = useState<string>(""); // Wholesaler cost e.g. 100
+  const [addonWholesalerId, setAddonWholesalerId] = useState<string>(""); // Separate Addon Wholesaler
+  const [addonUnitCost, setAddonUnitCost] = useState<string>(""); // Addon Wholesaler cost e.g. 100
 
   const products = useLiveQuery(() => db.products.toArray()) || [];
   const wholesalers = useLiveQuery(() => db.wholesalers.toArray()) || [];
 
   useEffect(() => {
     if (ticketToEdit) {
+      setRepairType(ticketToEdit.repair_type || 'hardware');
       setSelectedCustomerId(ticketToEdit.customer_id || "");
       setSelectedDeviceId(ticketToEdit.device_identifier_id || "");
       setDeviceName(ticketToEdit.device_name);
@@ -95,11 +121,51 @@ export const RepairTicketDialog = ({
     }
   };
 
-  // Real-time Financial Calculations
-  const partCostNum = (parseFloat(attachPartUnitCost) || 0) * (parseInt(attachPartQty) || 1);
-  const addonPriceNum = parseFloat(addonPrice) || 0;
+  const handleClearHardwarePart = () => {
+    setAttachPartProductId("");
+    setCustomPartName("");
+    setAttachWholesalerId("");
+    setAttachPartQty("1");
+    setAttachPartUnitCost("");
+  };
+
+  const handleClearAddon = () => {
+    setIncludeAddon(false);
+    setAddonName("");
+    setAddonPrice("");
+    setAddonUnitCost("");
+    setAddonWholesalerId("");
+    setAddonSourceMode("wholesaler");
+  };
+
+  const handleSelectAddonPreset = (preset: typeof ADDON_PRESETS[0]) => {
+    setIncludeAddon(true);
+    setAddonName(preset.name);
+    setAddonPrice(preset.defaultPrice);
+    setAddonUnitCost(preset.defaultCost);
+  };
+
+  const applySoftwarePreset = (preset: string) => {
+    if (!issueDescription.trim()) {
+      setIssueDescription(preset);
+    } else if (!issueDescription.includes(preset)) {
+      setIssueDescription(`${issueDescription}, ${preset}`);
+    }
+  };
+
+  // Strict Real-time Financial Calculations (Zero lingering costs)
+  const isPartConfigured = repairType === 'hardware' && Boolean(customPartName.trim() || attachPartProductId);
+  const partCostNum = isPartConfigured ? ((parseFloat(attachPartUnitCost) || 0) * (parseInt(attachPartQty) || 1)) : 0;
+
+  // Add-on cost is ONLY counted when includeAddon is true AND addonName is specified AND unit cost > 0
+  const isAddonActive = includeAddon && addonName.trim().length > 0;
+  const addonCostNum = isAddonActive ? (parseFloat(addonUnitCost) || 0) : 0;
+  const addonPriceNum = isAddonActive ? (parseFloat(addonPrice) || 0) : 0;
+
   const customerTotalNum = parseFloat(totalCustomerPrice) || 0;
-  const netShopProfit = customerTotalNum - partCostNum - addonPriceNum;
+  const totalDirectCosts = partCostNum + addonCostNum;
+  const netShopProfit = customerTotalNum - totalDirectCosts;
+  const profitMarginPercent = customerTotalNum > 0 ? Math.round((netShopProfit / customerTotalNum) * 100) : 0;
 
   const handleSave = async () => {
     if (!deviceName.trim()) {
@@ -133,6 +199,7 @@ export const RepairTicketDialog = ({
           device_name: deviceName.trim(),
           serial_or_imei: serialOrImei.trim() || null,
           issue_description: issueDescription.trim(),
+          repair_type: repairType,
           estimated_cost: customerTotalNum,
           deposit_paid: parseFloat(depositPaid) || 0,
           status,
@@ -165,7 +232,7 @@ export const RepairTicketDialog = ({
       } else {
         // Create new ticket
         const ticketId = crypto.randomUUID();
-        const ticketNumber = `REP-${Math.floor(1000 + Math.random() * 9000)}`;
+        const ticketNumber = `REP-${Date.now().toString().slice(-6)}`;
 
         const newTicket: CachedRepairTicket = {
           id: ticketId,
@@ -176,6 +243,7 @@ export const RepairTicketDialog = ({
           device_name: deviceName.trim(),
           serial_or_imei: serialOrImei.trim() || null,
           issue_description: issueDescription.trim(),
+          repair_type: repairType,
           estimated_cost: customerTotalNum,
           deposit_paid: parseFloat(depositPaid) || 0,
           status,
@@ -196,93 +264,95 @@ export const RepairTicketDialog = ({
           previous_status: null,
           new_status: status,
           changed_by: activeUserId,
-          notes: "Ticket created and received at shop",
+          notes: `Ticket created (${repairType === 'software' ? 'Software Service' : 'Hardware Repair'})`,
           synced: false,
           lastModified: nowTimestamp,
           created_at: nowIso
         };
         await syncService.queueOperation('repairTicketHistory', 'insert', historyEntry);
 
-        // 1. HANDLE REPAIR PART (Wholesaler / Inventory / Custom)
-        let resolvedProductId = attachPartProductId;
-        let resolvedPartName = "";
-        const qty = parseInt(attachPartQty) || 1;
-        const partCost = parseFloat(attachPartUnitCost) || 0;
+        // 1. HANDLE REPAIR PART (Hardware Repairs only)
+        if (repairType === 'hardware' && isPartConfigured) {
+          let resolvedProductId = attachPartProductId;
+          let resolvedPartName = "";
+          const qty = parseInt(attachPartQty) || 1;
+          const partCost = parseFloat(attachPartUnitCost) || 0;
 
-        if (partSourceMode === 'custom' && customPartName.trim()) {
-          const newProdId = crypto.randomUUID();
-          resolvedPartName = customPartName.trim();
-          const newProduct: CachedProduct = {
-            id: newProdId,
-            user_id: activeUserId,
-            name: resolvedPartName,
-            sku: `PART-${Math.floor(10000 + Math.random() * 90000)}`,
-            cost_price: partCost,
-            retail_price: partCost,
-            stock_quantity: 0,
-            is_repair_part: true,
-            synced: false,
-            lastModified: nowTimestamp,
-            created_at: nowIso,
-            updated_at: nowIso
-          };
-          await syncService.queueOperation('products', 'insert', newProduct);
-          resolvedProductId = newProdId;
-        } else if (attachPartProductId) {
-          const selectedProd = products.find(p => p.id === attachPartProductId);
-          resolvedPartName = selectedProd?.name || "Repair Part";
-        }
-
-        if (resolvedProductId) {
-          const partRecord: CachedRepairTicketPart = {
-            id: crypto.randomUUID(),
-            user_id: activeUserId,
-            repair_ticket_id: ticketId,
-            product_id: resolvedProductId,
-            quantity: qty,
-            unit_cost: partCost,
-            unit_price: partCost,
-            status: 'reserved',
-            item_type: 'part',
-            wholesaler_id: attachWholesalerId || null,
-            synced: false,
-            lastModified: nowTimestamp,
-            created_at: nowIso,
-            updated_at: nowIso
-          };
-          await syncService.queueOperation('repairTicketParts', 'insert', partRecord);
-
-          // RECORD TO WHOLESALER SCREEN
-          if (attachWholesalerId) {
-            const wholesaler = wholesalers.find(w => w.id === attachWholesalerId);
-            const intakeRecord: CachedWholesalerIntake = {
-              id: crypto.randomUUID(),
+          if (partSourceMode === 'custom' && customPartName.trim()) {
+            const newProdId = crypto.randomUUID();
+            resolvedPartName = customPartName.trim();
+            const newProduct: CachedProduct = {
+              id: newProdId,
               user_id: activeUserId,
-              wholesaler_id: attachWholesalerId,
-              product_id: resolvedProductId,
-              item_name: `${resolvedPartName} (Ticket ${ticketNumber})`,
-              quantity: qty,
-              agreed_unit_cost: partCost,
-              total_cost: qty * partCost,
-              amount_paid: 0,
-              intake_date: nowIso,
-              status: 'pending',
-              notes: `Sourced for Repair Ticket ${ticketNumber} (${deviceName.trim()})`,
+              name: resolvedPartName,
+              sku: `PART-${Math.floor(10000 + Math.random() * 90000)}`,
+              cost_price: partCost,
+              retail_price: partCost,
+              stock_quantity: 0,
+              is_repair_part: true,
               synced: false,
               lastModified: nowTimestamp,
               created_at: nowIso,
               updated_at: nowIso
             };
+            await syncService.queueOperation('products', 'insert', newProduct);
+            resolvedProductId = newProdId;
+          } else if (attachPartProductId) {
+            const selectedProd = products.find(p => p.id === attachPartProductId);
+            resolvedPartName = selectedProd?.name || "Repair Part";
+          }
 
-            await syncService.queueOperation('wholesalerIntakes', 'insert', intakeRecord);
-            toast.success(`Logged ${formatCurrency(qty * partCost)} cost to Wholesaler "${wholesaler?.name || 'Wholesaler'}" screen`);
+          if (resolvedProductId) {
+            const partRecord: CachedRepairTicketPart = {
+              id: crypto.randomUUID(),
+              user_id: activeUserId,
+              repair_ticket_id: ticketId,
+              product_id: resolvedProductId,
+              quantity: qty,
+              unit_cost: partCost,
+              unit_price: partCost,
+              status: 'reserved',
+              item_type: 'part',
+              wholesaler_id: attachWholesalerId || null,
+              synced: false,
+              lastModified: nowTimestamp,
+              created_at: nowIso,
+              updated_at: nowIso
+            };
+            await syncService.queueOperation('repairTicketParts', 'insert', partRecord);
+
+            // Record to main part wholesaler screen
+            if (attachWholesalerId) {
+              const wholesaler = wholesalers.find(w => w.id === attachWholesalerId);
+              const intakeRecord: CachedWholesalerIntake = {
+                id: crypto.randomUUID(),
+                user_id: activeUserId,
+                wholesaler_id: attachWholesalerId,
+                product_id: resolvedProductId,
+                item_name: `${resolvedPartName} (Ticket ${ticketNumber})`,
+                quantity: qty,
+                agreed_unit_cost: partCost,
+                total_cost: qty * partCost,
+                amount_paid: 0,
+                intake_date: nowIso,
+                status: 'pending',
+                notes: `Sourced for Repair Ticket ${ticketNumber} (${deviceName.trim()})`,
+                synced: false,
+                lastModified: nowTimestamp,
+                created_at: nowIso,
+                updated_at: nowIso
+              };
+
+              await syncService.queueOperation('wholesalerIntakes', 'insert', intakeRecord);
+              toast.success(`Logged ${formatCurrency(qty * partCost)} part cost to Wholesaler "${wholesaler?.name || 'Wholesaler'}"`);
+            }
           }
         }
 
-        // 2. HANDLE ADD-ON (e.g. Tempered Glass, Protector)
-        if (addonName.trim() && addonPriceNum > 0) {
-          const glassCostNum = parseFloat(addonUnitCost) || 0;
-          const targetWholesalerId = addonSourceMode === 'wholesaler' ? (addonWholesalerId || attachWholesalerId || null) : null;
+        // 2. HANDLE ADD-ON ACCESSORY (Separate Wholesaler Option)
+        if (isAddonActive && addonPriceNum > 0) {
+          const addonCost = parseFloat(addonUnitCost) || 0;
+          const targetAddonWholesalerId = addonSourceMode === 'wholesaler' ? (addonWholesalerId || null) : null;
 
           const addonProdId = crypto.randomUUID();
           const addonProduct: CachedProduct = {
@@ -290,7 +360,7 @@ export const RepairTicketDialog = ({
             user_id: activeUserId,
             name: addonName.trim(),
             sku: `ADDON-${Math.floor(10000 + Math.random() * 90000)}`,
-            cost_price: glassCostNum,
+            cost_price: addonCost,
             retail_price: addonPriceNum,
             stock_quantity: 0,
             is_repair_part: false,
@@ -307,11 +377,11 @@ export const RepairTicketDialog = ({
             repair_ticket_id: ticketId,
             product_id: addonProdId,
             quantity: 1,
-            unit_cost: glassCostNum,
+            unit_cost: addonCost,
             unit_price: addonPriceNum,
             status: 'reserved',
             item_type: 'product',
-            wholesaler_id: targetWholesalerId,
+            wholesaler_id: targetAddonWholesalerId,
             synced: false,
             lastModified: nowTimestamp,
             created_at: nowIso,
@@ -319,22 +389,22 @@ export const RepairTicketDialog = ({
           };
           await syncService.queueOperation('repairTicketParts', 'insert', addonPartRecord);
 
-          // IF SOURCED FROM WHOLESALER, LOG TO WHOLESALER SCREEN
-          if (targetWholesalerId && glassCostNum > 0) {
-            const wholesaler = wholesalers.find(w => w.id === targetWholesalerId);
+          // IF SOURCED FROM SEPARATE ADD-ON WHOLESALER, LOG TO THAT WHOLESALER'S INTAKE SCREEN
+          if (targetAddonWholesalerId && addonCost > 0) {
+            const addonWholesaler = wholesalers.find(w => w.id === targetAddonWholesalerId);
             const intakeRecord: CachedWholesalerIntake = {
               id: crypto.randomUUID(),
               user_id: activeUserId,
-              wholesaler_id: targetWholesalerId,
+              wholesaler_id: targetAddonWholesalerId,
               product_id: addonProdId,
               item_name: `${addonName.trim()} (Ticket ${ticketNumber})`,
               quantity: 1,
-              agreed_unit_cost: glassCostNum,
-              total_cost: glassCostNum,
+              agreed_unit_cost: addonCost,
+              total_cost: addonCost,
               amount_paid: 0,
               intake_date: nowIso,
               status: 'pending',
-              notes: `Add-on Glass sourced for Repair Ticket ${ticketNumber} (${deviceName.trim()})`,
+              notes: `Add-on accessory sourced for Ticket ${ticketNumber} (${deviceName.trim()})`,
               synced: false,
               lastModified: nowTimestamp,
               created_at: nowIso,
@@ -342,7 +412,7 @@ export const RepairTicketDialog = ({
             };
 
             await syncService.queueOperation('wholesalerIntakes', 'insert', intakeRecord);
-            toast.success(`Logged ${formatCurrency(glassCostNum)} Add-on cost to Wholesaler "${wholesaler?.name || 'Wholesaler'}" screen`);
+            toast.success(`Logged ${formatCurrency(addonCost)} Add-on cost to Wholesaler "${addonWholesaler?.name || 'Wholesaler'}"`);
           }
 
           toast.success(`Add-on "${addonName.trim()}" attached (${formatCurrency(addonPriceNum)})`);
@@ -361,6 +431,7 @@ export const RepairTicketDialog = ({
   };
 
   const resetForm = () => {
+    setRepairType("hardware");
     setSelectedCustomerId("");
     setSelectedDeviceId("");
     setDeviceName("");
@@ -378,6 +449,7 @@ export const RepairTicketDialog = ({
     setAttachPartQty("1");
     setAttachPartUnitCost("");
 
+    setIncludeAddon(false);
     setAddonName("");
     setAddonPrice("");
     setAddonSourceMode("wholesaler");
@@ -387,27 +459,57 @@ export const RepairTicketDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl max-h-[92vh] overflow-y-auto">
+      <DialogContent className="max-w-xl max-h-[92vh] overflow-y-auto bg-card text-foreground">
         <DialogHeader>
-          <DialogTitle className="text-lg flex items-center gap-2">
+          <DialogTitle className="text-lg flex items-center gap-2 text-foreground font-bold">
             <Wrench className="h-5 w-5 text-primary" />
             {ticketToEdit ? `Edit Ticket ${ticketToEdit.ticket_number}` : "Log New Repair Ticket"}
           </DialogTitle>
-          <DialogDescription className="text-xs">
-            Enter device details, wholesaler part cost, add-ons, and total customer price.
+          <DialogDescription className="text-xs text-muted-foreground">
+            Select repair mode, specify device details, parts/wholesalers, add-ons, and customer pricing.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-3.5 py-1 text-xs">
+          {/* REPAIR TYPE TOGGLE: HARDWARE VS SOFTWARE */}
+          <div className="p-1.5 bg-muted/60 dark:bg-muted/40 rounded-xl border flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setRepairType('hardware')}
+              className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+                repairType === 'hardware'
+                  ? 'bg-primary text-primary-foreground shadow-md'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-background/60'
+              }`}
+            >
+              <Cpu className="h-4 w-4" />
+              Hardware Repair
+              <span className="text-[10px] font-normal opacity-80">(Parts + Labor)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setRepairType('software')}
+              className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+                repairType === 'software'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-background/60'
+              }`}
+            >
+              <Code className="h-4 w-4" />
+              Software Service
+              <span className="text-[10px] font-normal opacity-80">(Flashing / OS / Unlock)</span>
+            </button>
+          </div>
+
           {/* Customer & Registered Device */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label className="text-xs font-medium">Customer (Optional)</Label>
+              <Label className="text-xs font-medium text-foreground">Customer (Optional)</Label>
               <Select value={selectedCustomerId} onValueChange={setSelectedCustomerId}>
-                <SelectTrigger className="h-8 text-xs">
+                <SelectTrigger className="h-8 text-xs bg-background text-foreground border-input">
                   <SelectValue placeholder="Select customer" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="bg-popover text-popover-foreground">
                   {customers.map((c) => (
                     <SelectItem key={c.id} value={c.id}>
                       {c.name} {c.phone ? `(${c.phone})` : ''}
@@ -418,12 +520,12 @@ export const RepairTicketDialog = ({
             </div>
 
             <div className="space-y-1">
-              <Label className="text-xs font-medium">Registered Device (Optional)</Label>
+              <Label className="text-xs font-medium text-foreground">Registered Device (Optional)</Label>
               <Select value={selectedDeviceId} onValueChange={handleDeviceSelection}>
-                <SelectTrigger className="h-8 text-xs">
+                <SelectTrigger className="h-8 text-xs bg-background text-foreground border-input">
                   <SelectValue placeholder="Select IMEI device" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="bg-popover text-popover-foreground">
                   {deviceIdentifiers.map((d) => (
                     <SelectItem key={d.id} value={d.id}>
                       {d.imei || d.serial_number}
@@ -437,10 +539,10 @@ export const RepairTicketDialog = ({
           {/* Device Name & IMEI */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label className="text-xs font-medium">Device Name / Model *</Label>
+              <Label className="text-xs font-medium text-foreground">Device Name / Model *</Label>
               <Input
                 placeholder="e.g. iPhone 13 Pro Max"
-                className="h-8 text-xs"
+                className="h-8 text-xs bg-background text-foreground"
                 value={deviceName}
                 onChange={(e) => setDeviceName(e.target.value)}
                 required
@@ -448,67 +550,104 @@ export const RepairTicketDialog = ({
             </div>
 
             <div className="space-y-1">
-              <Label className="text-xs font-medium">IMEI / Serial Number</Label>
+              <Label className="text-xs font-medium text-foreground">IMEI / Serial Number</Label>
               <Input
                 placeholder="15-digit IMEI or S/N"
-                className="h-8 text-xs"
+                className="h-8 text-xs bg-background text-foreground"
                 value={serialOrImei}
                 onChange={(e) => setSerialOrImei(e.target.value)}
               />
             </div>
           </div>
 
-          {/* Reported Issue */}
-          <div className="space-y-1">
-            <Label className="text-xs font-medium">Reported Problem / Issue *</Label>
+          {/* Reported Issue / Problem */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs font-medium text-foreground">
+                {repairType === 'software' ? "Software Service / Issue Description *" : "Reported Problem / Issue *"}
+              </Label>
+              {repairType === 'software' && (
+                <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold flex items-center gap-1">
+                  <Code className="h-3 w-3" /> Quick Presets Available Below
+                </span>
+              )}
+            </div>
             <Textarea
-              placeholder="e.g. Cracked screen, battery drain, liquid damage diagnosis"
+              placeholder={repairType === 'software' ? "e.g. Android FRP Bypass, iOS Restore, Bootloop fix" : "e.g. Cracked screen, battery drain, liquid damage diagnosis"}
               rows={2}
-              className="text-xs"
+              className="text-xs bg-background text-foreground"
               value={issueDescription}
               onChange={(e) => setIssueDescription(e.target.value)}
               required
             />
+            {/* Quick Software Service Preset Chips */}
+            {repairType === 'software' && (
+              <div className="flex flex-wrap gap-1 pt-1">
+                {SOFTWARE_PRESETS.map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => applySoftwarePreset(preset)}
+                    className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 transition-colors"
+                  >
+                    + {preset}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* 1. REPAIR PART & WHOLESALER SECTION */}
-          {!ticketToEdit && (
-            <div className="p-3 bg-muted/30 rounded-lg border space-y-2.5">
+          {/* 1. HARDWARE REPAIR PART & WHOLESALER SECTION (Only shown when Hardware repair is selected) */}
+          {repairType === 'hardware' && !ticketToEdit && (
+            <div className="p-3 bg-muted/40 rounded-lg border border-border space-y-2.5">
               <div className="flex items-center justify-between">
                 <Label className="text-xs font-semibold text-primary uppercase tracking-wider flex items-center gap-1.5">
                   <Package className="h-3.5 w-3.5" /> 1. Sourced Repair Part & Wholesaler
                 </Label>
-                <Tabs value={partSourceMode} onValueChange={(v: any) => setPartSourceMode(v)} className="h-6">
-                  <TabsList className="h-6 p-0.5 text-[10px]">
-                    <TabsTrigger value="custom" className="text-[10px] h-5 px-2 flex items-center gap-1">
-                      <Edit3 className="h-3 w-3" /> Custom Part
-                    </TabsTrigger>
-                    <TabsTrigger value="inventory" className="text-[10px] h-5 px-2 flex items-center gap-1">
-                      <List className="h-3 w-3" /> From Inventory
-                    </TabsTrigger>
-                  </TabsList>
-                </Tabs>
+                <div className="flex items-center gap-2">
+                  {isPartConfigured && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleClearHardwarePart}
+                      className="h-5 px-1.5 text-[10px] text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                    >
+                      <X className="h-2.5 w-2.5 mr-0.5" /> Clear Part
+                    </Button>
+                  )}
+                  <Tabs value={partSourceMode} onValueChange={(v: any) => setPartSourceMode(v)} className="h-6">
+                    <TabsList className="h-6 p-0.5 text-[10px]">
+                      <TabsTrigger value="custom" className="text-[10px] h-5 px-2 flex items-center gap-1">
+                        <Edit3 className="h-3 w-3" /> Custom Part
+                      </TabsTrigger>
+                      <TabsTrigger value="inventory" className="text-[10px] h-5 px-2 flex items-center gap-1">
+                        <List className="h-3 w-3" /> From Inventory
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 {partSourceMode === 'custom' ? (
                   <div className="space-y-1">
-                    <Label className="text-[11px]">Part Name (e.g. iPhone 13 Screen)</Label>
+                    <Label className="text-[11px] text-foreground">Part Name (e.g. iPhone 13 Screen)</Label>
                     <Input
                       placeholder="e.g. iPhone 13 OLED Screen"
-                      className="h-8 text-xs"
+                      className="h-8 text-xs bg-background text-foreground"
                       value={customPartName}
                       onChange={(e) => setCustomPartName(e.target.value)}
                     />
                   </div>
                 ) : (
                   <div className="space-y-1">
-                    <Label className="text-[11px]">Select Inventory Part</Label>
+                    <Label className="text-[11px] text-foreground">Select Inventory Part</Label>
                     <Select value={attachPartProductId} onValueChange={handleProductSelection}>
-                      <SelectTrigger className="h-8 text-xs">
+                      <SelectTrigger className="h-8 text-xs bg-background text-foreground border-input">
                         <SelectValue placeholder="Choose inventory part..." />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="bg-popover text-popover-foreground">
                         {products.map((p) => (
                           <SelectItem key={p.id} value={p.id}>
                             {p.name} ({formatCurrency(p.cost_price || p.retail_price)})
@@ -520,14 +659,14 @@ export const RepairTicketDialog = ({
                 )}
 
                 <div className="space-y-1">
-                  <Label className="text-[11px] flex items-center gap-1">
+                  <Label className="text-[11px] flex items-center gap-1 text-foreground">
                     <Truck className="h-3 w-3 text-purple-600" /> Sourced Wholesaler
                   </Label>
                   <Select value={attachWholesalerId} onValueChange={setAttachWholesalerId}>
-                    <SelectTrigger className="h-8 text-xs">
+                    <SelectTrigger className="h-8 text-xs bg-background text-foreground border-input">
                       <SelectValue placeholder="Select Wholesaler..." />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="bg-popover text-popover-foreground">
                       {wholesalers.map((w) => (
                         <SelectItem key={w.id} value={w.id}>
                           {w.name} {w.contact_person ? `(${w.contact_person})` : ''}
@@ -538,11 +677,17 @@ export const RepairTicketDialog = ({
                 </div>
               </div>
 
-              {(attachPartProductId || customPartName.trim()) && (
+              {isPartConfigured && (
                 <div className="grid grid-cols-2 gap-2 pt-1">
                   <div className="space-y-1">
-                    <Label className="text-[10px]">Qty</Label>
-                    <Input type="number" min="1" className="h-7 text-xs" value={attachPartQty} onChange={(e) => setAttachPartQty(e.target.value)} />
+                    <Label className="text-[10px] text-foreground">Qty</Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      className="h-7 text-xs bg-background text-foreground"
+                      value={attachPartQty}
+                      onChange={(e) => setAttachPartQty(e.target.value)}
+                    />
                   </div>
                   <div className="space-y-1">
                     <Label className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">
@@ -552,7 +697,7 @@ export const RepairTicketDialog = ({
                       type="number"
                       step="0.01"
                       placeholder="1800"
-                      className="h-7 text-xs font-bold border-amber-300 text-amber-700 dark:text-amber-300"
+                      className="h-7 text-xs font-bold border-amber-300 text-amber-700 dark:text-amber-300 bg-background"
                       value={attachPartUnitCost}
                       onChange={(e) => setAttachPartUnitCost(e.target.value)}
                     />
@@ -562,84 +707,151 @@ export const RepairTicketDialog = ({
             </div>
           )}
 
-          {/* 2. ADD-ON ACCESSORIES SECTION (e.g. Tempered Glass) */}
+          {/* 2. ADD-ON ACCESSORIES SECTION WITH EXPLICIT TOGGLE & ZERO GHOST COSTS */}
           {!ticketToEdit && (
-            <div className="p-3 bg-blue-50/30 dark:bg-blue-950/20 rounded-lg border border-blue-200/50 space-y-2">
+            <div className="p-3 bg-blue-50/40 dark:bg-blue-950/20 rounded-lg border border-blue-200/60 dark:border-blue-900/50 space-y-2.5">
               <div className="flex items-center justify-between">
-                <Label className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5 text-blue-600" /> 2. Add-on Accessory (e.g. Glass / Protector)
-                </Label>
-                {addonName.trim() && (
-                  <Badge variant="outline" className="text-[10px] bg-background text-blue-600 border-blue-300">
-                    Sourced: {addonSourceMode === 'wholesaler' ? 'Wholesaler' : 'Shop Inventory'}
-                  </Badge>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="addon-toggle"
+                    checked={includeAddon}
+                    onCheckedChange={(checked) => {
+                      setIncludeAddon(checked);
+                      if (!checked) {
+                        handleClearAddon();
+                      }
+                    }}
+                  />
+                  <Label htmlFor="addon-toggle" className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5 cursor-pointer">
+                    <Sparkles className="h-3.5 w-3.5 text-blue-600" /> 2. Add-on Accessory / Glass Protector
+                  </Label>
+                </div>
+
+                {isAddonActive && (
+                  <div className="flex items-center gap-1.5">
+                    <Badge variant="outline" className="text-[10px] bg-background text-blue-600 border-blue-300">
+                      {addonSourceMode === 'wholesaler' ? 'Wholesaler' : 'In-House'}
+                    </Badge>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleClearAddon}
+                      className="h-5 px-1.5 text-[10px] text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                    >
+                      <X className="h-2.5 w-2.5 mr-0.5" /> Remove
+                    </Button>
+                  </div>
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label className="text-[11px]">Add-on Item Name</Label>
-                  <Input
-                    placeholder="e.g. 9D Tempered Glass"
-                    className="h-8 text-xs"
-                    value={addonName}
-                    onChange={(e) => setAddonName(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-[11px]">Customer Charge Price (e.g. 200)</Label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    placeholder="200"
-                    className="h-8 text-xs font-semibold"
-                    value={addonPrice}
-                    onChange={(e) => setAddonPrice(e.target.value)}
-                  />
-                </div>
+              {/* Quick Preset Buttons */}
+              <div className="flex flex-wrap gap-1">
+                {ADDON_PRESETS.map((p) => (
+                  <button
+                    key={p.name}
+                    type="button"
+                    onClick={() => handleSelectAddonPreset(p)}
+                    className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-100/60 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800 hover:bg-blue-200/70 transition-colors"
+                  >
+                    + {p.name} ({formatCurrency(Number(p.defaultPrice))})
+                  </button>
+                ))}
               </div>
 
-              {addonName.trim().length > 0 && (
-                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-blue-200/40">
-                  <div className="space-y-1">
-                    <Label className="text-[10px] font-medium">Sourced From</Label>
-                    <Select value={addonSourceMode} onValueChange={(val: any) => setAddonSourceMode(val)}>
-                      <SelectTrigger className="h-7 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="wholesaler">Wholesaler Supplier</SelectItem>
-                        <SelectItem value="shop">Shop / Screen Stock</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {addonSourceMode === 'wholesaler' ? (
-                    <div className="space-y-1 col-span-2">
-                      <Label className="text-[10px] font-medium">Wholesaler Supplier for Glass</Label>
-                      <Select value={addonWholesalerId} onValueChange={setAddonWholesalerId}>
-                        <SelectTrigger className="h-7 text-xs font-medium border-amber-300">
-                          <SelectValue placeholder="Use Main Ticket Wholesaler" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="">Use Main Ticket Wholesaler</SelectItem>
-                          {wholesalers.map(w => (
-                            <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+              {includeAddon && (
+                <div className="space-y-2.5 pt-1 border-t border-blue-200/50 dark:border-blue-900/40">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-foreground">Add-on Item Name</Label>
+                      <Input
+                        placeholder="e.g. 9D Tempered Glass, UV Protector"
+                        className="h-8 text-xs bg-background text-foreground"
+                        value={addonName}
+                        onChange={(e) => setAddonName(e.target.value)}
+                      />
                     </div>
-                  ) : (
-                    <div className="space-y-1 col-span-2">
-                      <Label className="text-[10px] font-medium">Cost Price for Glass (Optional)</Label>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-foreground">Customer Retail Price (e.g. 200)</Label>
                       <Input
                         type="number"
                         step="0.01"
-                        placeholder="e.g. 100"
-                        className="h-7 text-xs"
-                        value={addonUnitCost}
-                        onChange={(e) => setAddonUnitCost(e.target.value)}
+                        placeholder="200"
+                        className="h-8 text-xs font-bold text-foreground bg-background"
+                        value={addonPrice}
+                        onChange={(e) => setAddonPrice(e.target.value)}
                       />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] font-medium text-foreground">Sourced From</Label>
+                      <Select value={addonSourceMode} onValueChange={(val: any) => setAddonSourceMode(val)}>
+                        <SelectTrigger className="h-7 text-xs bg-background text-foreground border-input">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-popover text-popover-foreground">
+                          <SelectItem value="wholesaler">Wholesaler Supplier</SelectItem>
+                          <SelectItem value="shop">In-House Stock</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {addonSourceMode === 'wholesaler' ? (
+                      <>
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-medium text-foreground flex items-center gap-1">
+                            <Truck className="h-3 w-3 text-purple-600" /> Separate Wholesaler
+                          </Label>
+                          <Select value={addonWholesalerId} onValueChange={setAddonWholesalerId}>
+                            <SelectTrigger className="h-7 text-xs font-medium border-purple-300 dark:border-purple-800 bg-background text-foreground">
+                              <SelectValue placeholder="Select Wholesaler..." />
+                            </SelectTrigger>
+                            <SelectContent className="bg-popover text-popover-foreground">
+                              {wholesalers.map(w => (
+                                <SelectItem key={w.id} value={w.id}>
+                                  {w.name} {w.contact_person ? `(${w.contact_person})` : ''}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                            Wholesaler Cost (e.g. 100)
+                          </Label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            placeholder="100"
+                            className="h-7 text-xs font-bold border-amber-300 text-amber-700 dark:text-amber-300 bg-background"
+                            value={addonUnitCost}
+                            onChange={(e) => setAddonUnitCost(e.target.value)}
+                          />
+                        </div>
+                      </>
+                    ) : (
+                      <div className="space-y-1 col-span-2">
+                        <Label className="text-[10px] font-medium text-foreground">In-House Cost Price (Optional)</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          placeholder="e.g. 50"
+                          className="h-7 text-xs bg-background text-foreground"
+                          value={addonUnitCost}
+                          onChange={(e) => setAddonUnitCost(e.target.value)}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {addonPriceNum > 0 && addonCostNum > 0 && (
+                    <div className="text-[10px] flex items-center justify-between text-muted-foreground bg-background/80 px-2.5 py-1.5 rounded-md border border-blue-200/50">
+                      <span>Customer Charged: <strong className="text-foreground">{formatCurrency(addonPriceNum)}</strong></span>
+                      <span>Supplier Cost: <strong className="text-amber-600">-{formatCurrency(addonCostNum)}</strong></span>
+                      <span className="text-emerald-600 font-bold">Add-on Margin: +{formatCurrency(addonPriceNum - addonCostNum)}</span>
                     </div>
                   )}
                 </div>
@@ -655,7 +867,7 @@ export const RepairTicketDialog = ({
                 type="number"
                 step="0.01"
                 placeholder="e.g. 4000"
-                className="h-8 text-xs font-bold text-primary text-sm"
+                className="h-8 text-xs font-bold text-primary text-sm bg-background"
                 value={totalCustomerPrice}
                 onChange={(e) => setTotalCustomerPrice(e.target.value)}
                 required
@@ -663,24 +875,24 @@ export const RepairTicketDialog = ({
             </div>
 
             <div className="space-y-1">
-              <Label className="text-xs font-medium">Deposit Paid</Label>
+              <Label className="text-xs font-medium text-foreground">Deposit Paid</Label>
               <Input
                 type="number"
                 step="0.01"
                 placeholder="0.00"
-                className="h-8 text-xs font-semibold text-emerald-600"
+                className="h-8 text-xs font-semibold text-emerald-600 bg-background"
                 value={depositPaid}
                 onChange={(e) => setDepositPaid(e.target.value)}
               />
             </div>
 
             <div className="space-y-1">
-              <Label className="text-xs font-medium">Initial Status</Label>
+              <Label className="text-xs font-medium text-foreground">Initial Status</Label>
               <Select value={status} onValueChange={(val: any) => setStatus(val)}>
-                <SelectTrigger className="h-8 text-xs">
+                <SelectTrigger className="h-8 text-xs bg-background text-foreground border-input">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="bg-popover text-popover-foreground">
                   <SelectItem value="received">Received</SelectItem>
                   <SelectItem value="diagnosing">Diagnosing</SelectItem>
                   <SelectItem value="awaiting_approval">Awaiting Approval</SelectItem>
@@ -701,25 +913,40 @@ export const RepairTicketDialog = ({
             <div className="flex items-center justify-between text-xs font-semibold">
               <span className="flex items-center gap-1.5 text-emerald-800 dark:text-emerald-300">
                 <ShieldCheck className="h-4 w-4 text-emerald-600" />
-                Net Shop Repair Profit:
+                Net Shop {repairType === 'software' ? 'Software Service' : 'Repair'} Profit:
               </span>
-              <span className={`text-base font-extrabold ${netShopProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600'}`}>
-                {formatCurrency(netShopProfit)}
-              </span>
+              <div className="flex items-center gap-2">
+                {customerTotalNum > 0 && (
+                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border-emerald-300">
+                    <Percent className="h-2.5 w-2.5 mr-0.5" />
+                    {profitMarginPercent}% Margin
+                  </Badge>
+                )}
+                <span className={`text-base font-extrabold ${netShopProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600'}`}>
+                  {formatCurrency(netShopProfit)}
+                </span>
+              </div>
             </div>
             <div className="flex items-center justify-between text-[11px] text-muted-foreground border-t border-emerald-200 dark:border-emerald-900/50 pt-1">
               <span>Customer Charge: <strong>{formatCurrency(customerTotalNum)}</strong></span>
-              <span>Wholesaler Cost: <strong className="text-amber-600">-{formatCurrency(partCostNum)}</strong></span>
-              {addonPriceNum > 0 && <span>Add-on: <strong>-{formatCurrency(addonPriceNum)}</strong></span>}
+              {isPartConfigured && partCostNum > 0 && (
+                <span>Part Cost: <strong className="text-amber-600">-{formatCurrency(partCostNum)}</strong></span>
+              )}
+              {isAddonActive && addonCostNum > 0 && (
+                <span>Add-on Cost: <strong className="text-purple-600">-{formatCurrency(addonCostNum)}</strong></span>
+              )}
+              {partCostNum === 0 && addonCostNum === 0 && (
+                <span className="text-emerald-600 font-medium italic">100% Service Labor / Profit</span>
+              )}
             </div>
           </div>
 
           <div className="space-y-1">
-            <Label className="text-xs font-medium">Technician Notes</Label>
+            <Label className="text-xs font-medium text-foreground">Technician Notes</Label>
             <Textarea
               placeholder="Additional repair notes or condition details upon intake"
               rows={2}
-              className="text-xs"
+              className="text-xs bg-background text-foreground"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
             />
@@ -731,7 +958,7 @@ export const RepairTicketDialog = ({
             Cancel
           </Button>
           <Button size="sm" onClick={handleSave} disabled={loading}>
-            {loading ? "Saving..." : (ticketToEdit ? "Save Changes" : "Create Ticket")}
+            {loading ? "Saving..." : (ticketToEdit ? "Save Changes" : `Create ${repairType === 'software' ? 'Software' : 'Hardware'} Ticket`)}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -55,16 +55,7 @@ const Customers = () => {
         email: form.email || null,
         phone: form.phone || null,
         address: form.address || null,
-        // notes: form.notes || null, // CachedCustomer interface doesn't have notes, checking db.ts... it doesn't.
-        // Wait, the original code had notes. Let me check db.ts again.
-        // db.ts CachedCustomer: id, name, email, phone, address, user_id, synced, lastModified, updated_at.
-        // It seems 'notes' is missing from CachedCustomer but might be in Supabase.
-        // If I want to support notes, I should add it to CachedCustomer in db.ts.
-        // For now, I will omit notes to avoid type errors, or I should update db.ts.
-        // Given the user wants to fix "customers not appearing", I should stick to what's in db.ts for now.
-        // But wait, if Supabase has notes, I should probably add it to db.ts.
-        // Let's check the original code again. It had `notes: string | null`.
-        // I'll assume for now I should just save what I can.
+        notes: form.notes || null,
         user_id: user.id,
         lastModified: Date.now(),
         synced: false,
@@ -112,7 +103,7 @@ const Customers = () => {
         email: customer.email || "",
         phone: customer.phone || "",
         address: customer.address || "",
-        notes: "", // Notes not in CachedCustomer yet
+        notes: customer.notes || "",
       });
     } else {
       resetForm();
@@ -134,7 +125,8 @@ const Customers = () => {
   const filteredCustomers = customers.filter((customer) =>
     customer.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     customer.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    customer.phone?.includes(searchQuery)
+    customer.phone?.includes(searchQuery) ||
+    customer.notes?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
@@ -150,7 +142,7 @@ const Customers = () => {
         <main className="flex-1 container mx-auto px-4 py-6 space-y-6">
           <div className="flex justify-between items-center gap-4">
             <Input
-              placeholder="Search customers..."
+              placeholder="Search customers by name, phone, email, notes..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="max-w-sm"
@@ -170,55 +162,73 @@ const Customers = () => {
                     <TableHead>Email</TableHead>
                     <TableHead>Phone</TableHead>
                     <TableHead>Address</TableHead>
+                    <TableHead>Notes</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredCustomers.map((customer) => (
-                    <TableRow key={customer.id}>
-                      <TableCell className="font-medium">{customer.name}</TableCell>
-                      <TableCell>
-                        {customer.email && (
-                          <div className="flex items-center gap-2">
-                            <Mail className="h-4 w-4 text-muted-foreground" />
-                            {customer.email}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {customer.phone && (
-                          <div className="flex items-center gap-2">
-                            <Phone className="h-4 w-4 text-muted-foreground" />
-                            {customer.phone}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {customer.address && (
-                          <div className="flex items-center gap-2">
-                            <MapPin className="h-4 w-4 text-muted-foreground" />
-                            {customer.address}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right space-x-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openDialog(customer)}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => handleDelete(customer.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                  {filteredCustomers.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">
+                        {searchQuery ? `No customers match "${searchQuery}"` : "No customers registered yet. Click 'Add Customer' to start."}
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : (
+                    filteredCustomers.map((customer) => (
+                      <TableRow key={customer.id}>
+                        <TableCell className="font-medium">{customer.name}</TableCell>
+                        <TableCell>
+                          {customer.email ? (
+                            <div className="flex items-center gap-2">
+                              <Mail className="h-4 w-4 text-muted-foreground" />
+                              {customer.email}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground text-xs italic">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {customer.phone ? (
+                            <div className="flex items-center gap-2">
+                              <Phone className="h-4 w-4 text-muted-foreground" />
+                              {customer.phone}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground text-xs italic">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {customer.address ? (
+                            <div className="flex items-center gap-2">
+                              <MapPin className="h-4 w-4 text-muted-foreground" />
+                              {customer.address}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground text-xs italic">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground">
+                          {customer.notes || "—"}
+                        </TableCell>
+                        <TableCell className="text-right space-x-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openDialog(customer)}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => handleDelete(customer.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </CardContent>
