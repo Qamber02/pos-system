@@ -255,9 +255,9 @@ const POS = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-muted/30 to-primary/10">
-      <header className="border-b-2 bg-card/98 backdrop-blur-md shadow-[var(--shadow-elevated)] sticky top-0 z-50">
-        <div className="max-w-[2000px] mx-auto px-4 sm:px-6 lg:px-8 xl:px-10">
-          <div className="flex items-center justify-between py-5 gap-4">
+      <header className="border-b bg-card/95 backdrop-blur-md shadow-sm sticky top-0 z-40">
+        <div className="max-w-[2000px] mx-auto px-4 pl-14 sm:px-6 lg:px-8 xl:px-10">
+          <div className="flex items-center justify-between py-4 gap-4">
             <div className="flex items-center gap-3 sm:gap-4">
               <Navigation />
               <CategoryFilter

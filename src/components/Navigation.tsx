@@ -1,18 +1,16 @@
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { Menu, Home, Package, Users, BarChart3, Settings, LogOut, Shield, HandCoins, ShoppingCart, CreditCard, RefreshCw, Wrench, Truck } from "lucide-react";
+import { Menu, Home, Package, Users, BarChart3, Settings, LogOut, Shield, ShoppingCart, CreditCard, RefreshCw, Wrench, Truck } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useUserRole } from "@/hooks/useUserRole";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import defaultLogo from "@/assets/default-logo.png";
 import { db } from "@/lib/db";
 import { syncService } from "@/lib/syncService";
-
 import { useOfflineSettings } from "@/hooks/useOfflineSettings";
 
 interface NavItem {
@@ -33,16 +31,13 @@ export const Navigation = () => {
   const logoUrl = settings.logo_url || defaultLogo;
   const businessName = settings.business_name || "POS SHOPPING";
   const [isSyncing, setIsSyncing] = useState(false);
-
+  const [open, setOpen] = useState(false);
 
   const handleLogout = async () => {
     try {
-      // Step 1: Clear all local user data
+      setOpen(false);
       await db.clearUserData();
-
-      // Step 2: Sign out from Supabase
       await supabase.auth.signOut();
-
       toast.success("Logged out successfully");
       navigate("/auth");
     } catch (error) {
@@ -71,84 +66,37 @@ export const Navigation = () => {
     { path: "/wholesalers", icon: Truck, label: "Wholesalers" },
     { path: "/customers", icon: Users, label: "Customers" },
     { path: "/loans", icon: CreditCard, label: "Loans" },
-    { path: "/reports", icon: BarChart3, label: "Reports" }, // Visible to all now
-    { path: "/staff", icon: Shield, label: "Staff", developerOnly: true }, // Only for developer
+    { path: "/reports", icon: BarChart3, label: "Reports" },
+    { path: "/staff", icon: Shield, label: "Staff", developerOnly: true },
     { path: "/settings", icon: Settings, label: "Settings" },
   ];
 
   const userName = profile?.email ? profile.email.split('@')[0] : "Loading...";
-
   const userEmail = profile?.email;
   const isDeveloper = role === 'developer';
 
-  const NavLinks = () => (
-    <nav className="space-y-1">
-      {navItems
-        .filter((item) => {
-          if (item.developerOnly) return isDeveloper;
-          if (item.adminOnly) return isAdmin;
-          return true;
-        })
-        .map((item) => {
-          const Icon = item.icon;
-          const isActive = location.pathname === item.path;
-          return (
-            <Link key={item.path} to={item.path}>
-              <Button
-                variant={isActive ? "default" : "ghost"}
-                className="w-full justify-start transition-all"
-              >
-                <Icon className="mr-3 h-4 w-4" />
-                {item.label}
-                {(item.adminOnly || item.developerOnly) && (
-                  <Shield className="ml-auto h-3 w-3 text-primary-foreground" />
-                )}
-              </Button>
-            </Link>
-          );
-        })}
-
-      {isDeveloper && (
-        <>
-          <Separator className="my-2" />
-          <Link to="/control-panel">
-            <Button variant="ghost" className="w-full justify-start text-red-600 hover:text-red-700 hover:bg-red-50">
-              <Shield className="mr-3 h-4 w-4" />
-              Control Panel
-            </Button>
-          </Link>
-        </>
-      )}
-
-      <Separator className="my-4" />
-      <Button
-        variant="ghost"
-        className="w-full justify-start text-destructive hover:text-destructive hover:bg-destructive/10 transition-all"
-        onClick={handleLogout}
-      >
-        <LogOut className="mr-3 h-4 w-4" />
-        Logout
-      </Button>
-    </nav>
-  );
-
   return (
-    <Sheet>
+    <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild>
-        <Button variant="outline" size="icon" className="fixed top-3.5 left-4 z-[100] h-10 w-10 rounded-full shadow-md bg-white/90 backdrop-blur-md border-zinc-200 hover:scale-105 transition-all duration-300 dark:bg-zinc-900/90 dark:border-zinc-800">
+        <Button
+          variant="outline"
+          size="icon"
+          className={`fixed top-3.5 left-4 z-40 h-10 w-10 rounded-full shadow-md bg-white/90 backdrop-blur-md border-zinc-200 hover:scale-105 transition-all duration-300 dark:bg-zinc-900/90 dark:border-zinc-800 ${open ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+        >
           <Menu className="h-5 w-5 text-zinc-700 dark:text-zinc-200" />
         </Button>
       </SheetTrigger>
-      <SheetContent side="left" className="w-80 p-0 border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950">
+
+      <SheetContent side="left" className="w-80 p-0 border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 z-[100]">
         <div className="h-full flex flex-col">
           {/* Header Section */}
-          <div className="p-6 bg-gradient-to-br from-red-600 to-red-700 text-white">
+          <div className="p-6 bg-gradient-to-br from-red-600 to-red-700 text-white relative">
             <div className="flex items-center gap-4 mb-6">
               <div className="w-14 h-14 rounded-2xl bg-white/10 backdrop-blur-md flex items-center justify-center ring-1 ring-white/20 shadow-inner">
                 <img src={logoUrl} alt={businessName} className="w-10 h-10 object-contain" />
               </div>
               <div>
-                <h2 className="text-lg font-bold leading-tight">{businessName}</h2>
+                <h2 className="text-lg font-bold leading-tight truncate max-w-[160px]">{businessName}</h2>
                 <p className="text-xs text-red-100/80 font-medium">Point of Sale System</p>
               </div>
             </div>
@@ -179,7 +127,7 @@ export const Navigation = () => {
                   const Icon = item.icon;
                   const isActive = location.pathname === item.path;
                   return (
-                    <Link key={item.path} to={item.path}>
+                    <Link key={item.path} to={item.path} onClick={() => setOpen(false)}>
                       <Button
                         variant="ghost"
                         className={`w-full justify-start mb-1 h-11 rounded-xl transition-all duration-200 ${isActive
@@ -201,7 +149,7 @@ export const Navigation = () => {
             {isDeveloper && (
               <div className="space-y-1">
                 <p className="px-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Developer</p>
-                <Link to="/control-panel">
+                <Link to="/control-panel" onClick={() => setOpen(false)}>
                   <Button variant="ghost" className="w-full justify-start h-11 rounded-xl text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:text-amber-500 dark:hover:bg-amber-900/20">
                     <Shield className="mr-3 h-5 w-5" />
                     Control Panel

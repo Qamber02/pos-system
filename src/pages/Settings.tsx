@@ -258,15 +258,14 @@ const Settings = () => {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <header className="border-b bg-card shadow-sm sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4 flex items-center gap-4">
+      <header className="border-b bg-card/95 backdrop-blur-md shadow-sm sticky top-0 z-40">
+        <div className="container mx-auto px-4 py-4 pl-14 flex items-center gap-4">
           <Navigation />
           <h1 className="text-2xl font-bold">Settings</h1>
         </div>
       </header>
 
       <div className="flex flex-1">
-        <Navigation />
         <main className="flex-1 container mx-auto px-4 py-6 max-w-4xl space-y-6">
           <Card>
             <CardHeader>

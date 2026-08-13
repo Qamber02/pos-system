@@ -71,10 +71,14 @@ const Products = () => {
     })).sort((a, b) => a.name.localeCompare(b.name));
   }) || [];
 
+  const generateUniqueBarcode = () => {
+    return `890${Math.floor(100000000 + Math.random() * 900000000)}`;
+  };
+
   const [productForm, setProductForm] = useState({
     name: "",
     description: "",
-    barcode: "",
+    barcode: generateUniqueBarcode(),
     category_id: "",
     retail_price: "",
     cost_price: "",
@@ -329,7 +333,7 @@ const Products = () => {
     setProductForm({
       name: "",
       description: "",
-      barcode: "",
+      barcode: generateUniqueBarcode(),
       category_id: "",
       retail_price: "",
       cost_price: "",
@@ -359,15 +363,14 @@ const Products = () => {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <header className="border-b bg-card shadow-sm sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4 flex items-center gap-4">
+      <header className="border-b bg-card/95 backdrop-blur-md shadow-sm sticky top-0 z-40">
+        <div className="container mx-auto px-4 py-4 pl-14 flex items-center gap-4">
           <Navigation />
           <h1 className="text-2xl font-bold">Product Management</h1>
         </div>
       </header>
 
       <div className="flex flex-1">
-        <Navigation />
         <main className="flex-1 container mx-auto px-4 py-6">
           <Tabs defaultValue="products" className="space-y-4">
             <TabsList>
@@ -752,11 +755,24 @@ const Products = () => {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="barcode">Barcode</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="barcode">Barcode (Auto-Generated)</Label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-xs text-primary hover:bg-primary/10"
+                    onClick={() => setProductForm({ ...productForm, barcode: generateUniqueBarcode() })}
+                  >
+                    <RefreshCw className="h-3 w-3 mr-1" /> Re-Generate
+                  </Button>
+                </div>
                 <Input
                   id="barcode"
                   value={productForm.barcode}
                   onChange={(e) => setProductForm({ ...productForm, barcode: e.target.value })}
+                  placeholder="Auto-generated barcode..."
+                  className="font-mono text-sm"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
