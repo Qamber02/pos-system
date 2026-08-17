@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Clock, Smartphone, User, DollarSign, ArrowRight, CheckCircle2, AlertCircle, Wrench, ShieldAlert, Cpu, Code } from "lucide-react";
+import { Clock, Smartphone, User, DollarSign, ArrowRight, CheckCircle2, AlertCircle, Wrench, ShieldAlert, Cpu, Code, Trash2, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { syncService } from "@/lib/syncService";
 import { db, CachedCustomer, CachedRepairTicket, CachedRepairTicketHistory, RepairStatus } from "@/lib/db";
@@ -16,7 +16,6 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { TicketPartsManager } from "@/components/repair/TicketPartsManager";
 import { RepairRefundDialog } from "@/components/repair/RepairRefundDialog";
-import { RotateCcw } from "lucide-react";
 
 interface RepairTicketDetailModalProps {
   open: boolean;
@@ -24,6 +23,7 @@ interface RepairTicketDetailModalProps {
   ticket: CachedRepairTicket | null;
   history: CachedRepairTicketHistory[];
   customer?: CachedCustomer | null;
+  onDeleteTicket?: (ticket: CachedRepairTicket) => void;
 }
 
 const statusColorMap: Record<RepairStatus, string> = {
@@ -58,7 +58,8 @@ export const RepairTicketDetailModal = ({
   onOpenChange,
   ticket,
   history,
-  customer
+  customer,
+  onDeleteTicket
 }: RepairTicketDetailModalProps) => {
   const formatCurrency = useFormatCurrency();
   const [updating, setUpdating] = useState(false);
@@ -100,7 +101,7 @@ export const RepairTicketDetailModal = ({
     .reduce((sum, item) => sum + ((item.unit_cost || 0) * item.quantity), 0);
 
   const totalRefundedSum = refunds.reduce((sum, r) => sum + r.amount, 0);
-  const grandTotalInvoice = Math.max(ticket.estimated_cost || 0, activeItemsTotal > 0 ? (ticket.estimated_cost || 0) : (ticket.estimated_cost || 0));
+  const grandTotalInvoice = Math.max(ticket.estimated_cost || 0, activeItemsTotal > 0 ? (ticket.estimated_cost || 0) : (ticket.estimated_cost || 0)) + activeItemsTotal;
   const netProfit = grandTotalInvoice - totalPartCost;
   const balanceRemaining = Math.max(0, grandTotalInvoice - (ticket.deposit_paid || 0));
 
@@ -257,7 +258,7 @@ export const RepairTicketDetailModal = ({
                       <p className="text-xs font-bold text-foreground mt-0.5">Balance Due: <span className={balanceRemaining > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600"}>{formatCurrency(balanceRemaining)}</span></p>
                     </div>
 
-                    <div className="pt-2">
+                    <div className="pt-2 space-y-1.5">
                       <Button
                         variant="outline"
                         size="sm"
@@ -266,6 +267,16 @@ export const RepairTicketDetailModal = ({
                       >
                         <RotateCcw className="h-3 w-3 mr-1" /> Process Refund
                       </Button>
+                      {onDeleteTicket && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs text-destructive hover:bg-destructive hover:text-white border-destructive/40 w-full"
+                          onClick={() => onDeleteTicket(ticket)}
+                        >
+                          <Trash2 className="h-3 w-3 mr-1" /> Delete Repair Job
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>

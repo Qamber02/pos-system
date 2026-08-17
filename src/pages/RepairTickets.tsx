@@ -8,13 +8,14 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Search, RefreshCw, Wrench, Clock, CheckCircle2, AlertCircle, Eye, Edit, Smartphone, DollarSign, Cpu, Code } from "lucide-react";
+import { Plus, Search, RefreshCw, Wrench, Clock, CheckCircle2, AlertCircle, Eye, Edit, Smartphone, DollarSign, Cpu, Code, Trash2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { db, CachedRepairTicket, RepairStatus } from "@/lib/db";
 import { syncService } from "@/lib/syncService";
 import { useLiveQuery } from "dexie-react-hooks";
 import { RepairTicketDialog } from "@/components/repair/RepairTicketDialog";
 import { RepairTicketDetailModal } from "@/components/repair/RepairTicketDetailModal";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 
 const statusColorMap: Record<RepairStatus, { label: string; className: string }> = {
@@ -43,6 +44,9 @@ const RepairTickets = () => {
   const [editingTicket, setEditingTicket] = useState<CachedRepairTicket | null>(null);
   const [selectedTicket, setSelectedTicket] = useState<CachedRepairTicket | null>(null);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [ticketToDelete, setTicketToDelete] = useState<CachedRepairTicket | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Live queries from local Dexie IndexedDB
   const customers = useLiveQuery(() => db.customers.toArray()) || [];
@@ -80,6 +84,73 @@ const RepairTickets = () => {
       toast.error("Sync failed");
     } finally {
       setIsSyncing(false);
+    }
+  };
+
+  const confirmDeleteTicket = (ticket: CachedRepairTicket) => {
+    setTicketToDelete(ticket);
+    setDeleteConfirmOpen(true);
+  };
+
+  const executeDeleteTicket = async () => {
+    if (!ticketToDelete) return;
+    setDeleting(true);
+    try {
+      const ticketId = ticketToDelete.id;
+
+      // 1. Delete parts and part history
+      const parts = await db.repairTicketParts.where('repair_ticket_id').equals(ticketId).toArray();
+      for (const part of parts) {
+        await syncService.queueOperation('repairTicketParts', 'delete', { id: part.id });
+      }
+      await db.repairTicketParts.where('repair_ticket_id').equals(ticketId).delete();
+
+      const partHistories = await db.repairTicketPartHistory.where('repair_ticket_id').equals(ticketId).toArray();
+      for (const ph of partHistories) {
+        await syncService.queueOperation('repairTicketPartHistory', 'delete', { id: ph.id });
+      }
+      await db.repairTicketPartHistory.where('repair_ticket_id').equals(ticketId).delete();
+
+      // 2. Delete ticket history
+      const histories = await db.repairTicketHistory.where('repair_ticket_id').equals(ticketId).toArray();
+      for (const h of histories) {
+        await syncService.queueOperation('repairTicketHistory', 'delete', { id: h.id });
+      }
+      await db.repairTicketHistory.where('repair_ticket_id').equals(ticketId).delete();
+
+      // 3. Delete wholesaler intakes associated with this ticket if any
+      const intakes = await db.wholesalerIntakes.toArray();
+      const ticketIntakes = intakes.filter(i => (i.notes && (i.notes.includes(ticketToDelete.ticket_number) || i.notes.includes(ticketId.slice(0, 8)))) || (i.item_name && i.item_name.includes(ticketToDelete.ticket_number)));
+      for (const intake of ticketIntakes) {
+        await syncService.queueOperation('wholesalerIntakes', 'delete', { id: intake.id });
+        await db.wholesalerIntakes.delete(intake.id);
+      }
+
+      // 4. Delete the ticket itself
+      await syncService.queueOperation('repairTickets', 'delete', { id: ticketId });
+      await db.repairTickets.delete(ticketId);
+
+      // 5. Cloud delete if online
+      if (navigator.onLine) {
+        try {
+          await supabase.from('repair_ticket_part_history').delete().eq('repair_ticket_id', ticketId);
+          await supabase.from('repair_ticket_parts').delete().eq('repair_ticket_id', ticketId);
+          await supabase.from('repair_ticket_history').delete().eq('repair_ticket_id', ticketId);
+          await supabase.from('repair_tickets').delete().eq('id', ticketId);
+        } catch (cloudErr) {
+          console.warn('Cloud delete error (sync queue will retry):', cloudErr);
+        }
+      }
+
+      toast.success(`Repair ticket #${ticketToDelete.ticket_number} (${ticketToDelete.device_name}) deleted permanently`);
+      setDeleteConfirmOpen(false);
+      setDetailModalOpen(false);
+      setTicketToDelete(null);
+    } catch (error: any) {
+      console.error('Failed to delete repair ticket:', error);
+      toast.error(error.message || 'Failed to delete repair ticket');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -142,15 +213,15 @@ const RepairTickets = () => {
         <Navigation />
         <main className="flex-1 container mx-auto px-4 py-6 space-y-6">
           {/* Executive Glanceable Stats Banner */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Card className="border-zinc-200/80 dark:border-zinc-800 shadow-sm">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Card className="border-primary/20 shadow-sm">
               <CardContent className="pt-4 flex items-center justify-between">
                 <div>
-                  <p className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider">Active Repairs</p>
-                  <p className="text-2xl font-extrabold text-primary mt-0.5">{activeCount}</p>
+                  <p className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider">Active Repair Jobs</p>
+                  <p className="text-2xl font-extrabold text-foreground mt-0.5">{activeCount}</p>
                 </div>
                 <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
-                  <Clock className="h-5 w-5" />
+                  <Wrench className="h-5 w-5" />
                 </div>
               </CardContent>
             </Card>
@@ -204,14 +275,14 @@ const RepairTickets = () => {
               />
             </div>
 
-            {/* Type Filter Segmented Buttons */}
-            <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-lg border text-xs">
+            {/* Type Filter Tabs: All vs Hardware vs Software */}
+            <div className="flex items-center gap-1 bg-muted/40 p-1 rounded-lg border">
               <button
                 type="button"
                 onClick={() => setTypeFilter('all')}
-                className={`px-2.5 py-1 rounded-md font-medium transition-all ${
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
                   typeFilter === 'all'
-                    ? 'bg-background text-foreground shadow-xs font-semibold'
+                    ? 'bg-background shadow-xs text-foreground'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
@@ -220,53 +291,51 @@ const RepairTickets = () => {
               <button
                 type="button"
                 onClick={() => setTypeFilter('hardware')}
-                className={`px-2.5 py-1 rounded-md font-medium transition-all flex items-center gap-1 ${
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition-all flex items-center gap-1.5 ${
                   typeFilter === 'hardware'
-                    ? 'bg-blue-600 text-white shadow-xs font-semibold'
+                    ? 'bg-blue-500 text-white shadow-xs'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                <Cpu className="h-3 w-3" /> Hardware
+                <Cpu className="h-3.5 w-3.5" /> Hardware
               </button>
               <button
                 type="button"
                 onClick={() => setTypeFilter('software')}
-                className={`px-2.5 py-1 rounded-md font-medium transition-all flex items-center gap-1 ${
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition-all flex items-center gap-1.5 ${
                   typeFilter === 'software'
-                    ? 'bg-indigo-600 text-white shadow-xs font-semibold'
+                    ? 'bg-indigo-600 text-white shadow-xs'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                <Code className="h-3 w-3" /> Software
+                <Code className="h-3.5 w-3.5" /> Software
               </button>
             </div>
           </div>
 
-          {/* Tabs & Ticket List */}
+          {/* Status Tabs & Job List Table */}
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-            <TabsList className="bg-card border shadow-xs h-10 p-1">
-              <TabsTrigger value="active" className="text-xs px-3 py-1">Active ({activeCount})</TabsTrigger>
-              <TabsTrigger value="ready" className="text-xs px-3 py-1">Ready ({readyCount})</TabsTrigger>
-              <TabsTrigger value="completed" className="text-xs px-3 py-1">Completed ({completedCount})</TabsTrigger>
-              <TabsTrigger value="cancelled" className="text-xs px-3 py-1">Cancelled</TabsTrigger>
-              <TabsTrigger value="all" className="text-xs px-3 py-1">All ({tickets.length})</TabsTrigger>
+            <TabsList className="bg-card border shadow-2xs">
+              <TabsTrigger value="active" className="text-xs">Active ({activeCount})</TabsTrigger>
+              <TabsTrigger value="ready" className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold">Ready for Pickup ({readyCount})</TabsTrigger>
+              <TabsTrigger value="completed" className="text-xs">Completed ({completedCount})</TabsTrigger>
+              <TabsTrigger value="cancelled" className="text-xs">Cancelled</TabsTrigger>
+              <TabsTrigger value="all" className="text-xs">All History ({tickets.length})</TabsTrigger>
             </TabsList>
 
             <TabsContent value={activeTab}>
-              <Card className="border-zinc-200/80 dark:border-zinc-800 shadow-sm overflow-hidden">
+              <Card className="border shadow-2xs overflow-hidden">
                 <CardContent className="p-0">
                   {filteredTickets.length === 0 ? (
-                    <div className="text-center py-16 text-muted-foreground space-y-2">
-                      <Wrench className="h-10 w-10 mx-auto text-muted-foreground/30" />
-                      <p className="font-semibold text-sm">No repair tickets found</p>
-                      <p className="text-xs">Click "Log Repair Job" to create a new ticket.</p>
+                    <div className="p-8 text-center text-muted-foreground text-xs">
+                      No repair jobs found matching this criteria.
                     </div>
                   ) : (
                     <Table>
-                      <TableHeader>
-                        <TableRow className="bg-muted/40 hover:bg-muted/40">
+                      <TableHeader className="bg-muted/40">
+                        <TableRow>
                           <TableHead className="text-xs font-bold py-3">Ticket #</TableHead>
-                          <TableHead className="text-xs font-bold py-3">Device & SN / IMEI</TableHead>
+                          <TableHead className="text-xs font-bold py-3">Device & IMEI</TableHead>
                           <TableHead className="text-xs font-bold py-3">Customer</TableHead>
                           <TableHead className="text-xs font-bold py-3">Reported Issue</TableHead>
                           <TableHead className="text-xs font-bold py-3">Stage Status</TableHead>
@@ -339,8 +408,18 @@ const RepairTickets = () => {
                                   size="sm"
                                   className="h-7 w-7 p-0"
                                   onClick={() => { setEditingTicket(ticket); setCreateDialogOpen(true); }}
+                                  title="Edit Ticket"
                                 >
                                   <Edit className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 text-xs text-destructive hover:bg-destructive/10 border-destructive/30 px-2"
+                                  onClick={() => confirmDeleteTicket(ticket)}
+                                  title="Delete Repair Ticket"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
                                 </Button>
                               </TableCell>
                             </TableRow>
@@ -372,7 +451,41 @@ const RepairTickets = () => {
         ticket={selectedTicket}
         history={history}
         customer={selectedTicket?.customer}
+        onDeleteTicket={confirmDeleteTicket}
       />
+
+      {/* Delete Repair Ticket Confirmation Alert Dialog */}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-5 w-5 text-destructive" /> Delete Repair Job?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2 text-xs">
+              <p>
+                Are you sure you want to permanently delete ticket{" "}
+                <strong className="text-foreground">#{ticketToDelete?.ticket_number}</strong> ({ticketToDelete?.device_name})?
+              </p>
+              <p className="text-destructive font-medium">
+                This will delete the repair job, attached parts, part audit history, status workflow history, and any linked wholesaler intake records from both local offline database and cloud storage.
+              </p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90 text-white"
+              onClick={(e) => {
+                e.preventDefault();
+                executeDeleteTicket();
+              }}
+              disabled={deleting}
+            >
+              {deleting ? "Deleting..." : "Confirm & Delete Repair Job"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
