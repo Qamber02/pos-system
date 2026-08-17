@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useUserRole } from '@/hooks/useUserRole';
 import { Loader2 } from 'lucide-react';
@@ -9,16 +8,10 @@ interface ProtectedRouteProps {
 }
 
 export const ProtectedRoute = ({ children, requireAdmin = false }: ProtectedRouteProps) => {
-  const { role, loading, isAdmin } = useUserRole();
-  const [checking, setChecking] = useState(true);
+  const { profile, role, isAdmin } = useUserRole();
 
-  useEffect(() => {
-    if (!loading) {
-      setChecking(false);
-    }
-  }, [loading]);
-
-  if (checking || loading) {
+  // profile is undefined while Dexie live query is loading, null/object once resolved
+  if (profile === undefined) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="text-center space-y-4">
