@@ -194,6 +194,7 @@ export interface CachedRepairTicket {
   user_id: string;
   ticket_number: string;
   customer_id?: string | null;
+  customer?: CachedCustomer | null;
   device_identifier_id?: string | null;
   device_name: string;
   serial_or_imei?: string | null;
