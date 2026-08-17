@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Navigation } from "@/components/Navigation";
 import { Dashboard } from "@/components/Dashboard";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -12,13 +13,15 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CalendarIcon, Eye, FileSpreadsheet, Wrench, Truck, RotateCcw, ShoppingBag, DollarSign, TrendingUp, Cpu, Code } from "lucide-react";
+import { CalendarIcon, Eye, FileSpreadsheet, Wrench, Truck, RotateCcw, ShoppingBag, DollarSign, TrendingUp, Cpu, Code, Trash2, Search, AlertTriangle, AlertCircle } from "lucide-react";
 import ExcelJS from 'exceljs';
 import { format, startOfMonth, endOfMonth } from "date-fns";
 import { toast } from "sonner";
 import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell, Legend } from "recharts";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { db } from "@/lib/db";
+import { syncService } from "@/lib/syncService";
 import { useLiveQuery } from "dexie-react-hooks";
 
 interface Sale {
@@ -49,9 +52,13 @@ const Reports = () => {
   const [endDate, setEndDate] = useState<Date | undefined>(endOfMonth(new Date()));
   const formatPrice = useFormatCurrency();
   const [paymentFilter, setPaymentFilter] = useState("all");
+  const [salesSearchQuery, setSalesSearchQuery] = useState("");
   const [reportTab, setReportTab] = useState("overview");
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [saleToDelete, setSaleToDelete] = useState<Sale | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Live queries for Repairs, Wholesalers, Payments, and Refunds
   const repairTickets = useLiveQuery(() => db.repairTickets.toArray()) || [];
@@ -72,7 +79,7 @@ const Reports = () => {
 
   useEffect(() => {
     filterSales();
-  }, [sales, startDate, endDate, paymentFilter]);
+  }, [sales, startDate, endDate, paymentFilter, salesSearchQuery]);
 
   const checkAuth = async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -154,7 +161,67 @@ const Reports = () => {
       filtered = filtered.filter((sale) => sale.payment_method === paymentFilter);
     }
 
+    if (salesSearchQuery.trim()) {
+      const q = salesSearchQuery.toLowerCase().trim();
+      filtered = filtered.filter(sale => {
+        const receiptMatch = sale.receipt_number?.toLowerCase().includes(q);
+        const custMatch = sale.customers?.name?.toLowerCase().includes(q);
+        const itemMatch = sale.sale_items?.some(item => item.product_name?.toLowerCase().includes(q));
+        const paymentMatch = sale.payment_method?.toLowerCase().includes(q);
+        return receiptMatch || custMatch || itemMatch || paymentMatch;
+      });
+    }
+
     setFilteredSales(filtered);
+  };
+
+  const confirmDeleteSale = (sale: Sale) => {
+    setSaleToDelete(sale);
+    setDeleteConfirmOpen(true);
+  };
+
+  const executeDeleteSale = async () => {
+    if (!saleToDelete) return;
+    setDeleting(true);
+    try {
+      const saleId = saleToDelete.id;
+
+      // 1. Find all local sale_items
+      const items = await db.saleItems.where('sale_id').equals(saleId).toArray();
+
+      // 2. Queue delete operations for sync
+      for (const item of items) {
+        await syncService.queueOperation('saleItems', 'delete', { id: item.id });
+      }
+      await syncService.queueOperation('sales', 'delete', { id: saleId });
+
+      // 3. Delete from local Dexie database
+      await db.saleItems.where('sale_id').equals(saleId).delete();
+      await db.sales.delete(saleId);
+
+      // 4. Delete directly from Supabase if online
+      if (navigator.onLine) {
+        try {
+          await supabase.from('sale_items').delete().eq('sale_id', saleId);
+          await supabase.from('sales').delete().eq('id', saleId);
+        } catch (cloudErr) {
+          console.warn('Cloud delete error (sync will retry):', cloudErr);
+        }
+      }
+
+      toast.success(`Sale receipt #${saleToDelete.receipt_number} deleted successfully`);
+      setDeleteConfirmOpen(false);
+      setDetailsOpen(false);
+      setSaleToDelete(null);
+
+      // Refresh sales state
+      await fetchSales();
+    } catch (err: any) {
+      console.error('Failed to delete sale:', err);
+      toast.error(err.message || 'Failed to delete sale');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   // Date Filtered Repair Tickets, Intakes & Refunds (with immutable date bounds)
@@ -910,7 +977,34 @@ const Reports = () => {
             {/* Tab 5: POS Sales Receipts */}
             <TabsContent value="sales">
               <Card>
-                <CardContent className="pt-6">
+                <CardHeader className="pb-3 border-b flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <ShoppingBag className="h-5 w-5 text-primary" /> POS Sales Receipts Ledger
+                    </CardTitle>
+                    <CardDescription className="text-xs">
+                      Search, inspect, and manage or void individual sales receipts
+                    </CardDescription>
+                  </div>
+                  <div className="relative w-full sm:w-72">
+                    <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                    <Input
+                      placeholder="Search receipt #, customer, item..."
+                      value={salesSearchQuery}
+                      onChange={(e) => setSalesSearchQuery(e.target.value)}
+                      className="h-8 text-xs pl-8 pr-8"
+                    />
+                    {salesSearchQuery && (
+                      <button
+                        onClick={() => setSalesSearchQuery("")}
+                        className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground text-xs"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-4">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -923,24 +1017,40 @@ const Reports = () => {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredSales.map((sale) => (
-                        <TableRow key={sale.id}>
-                          <TableCell className="font-mono text-xs font-bold text-primary">{sale.receipt_number}</TableCell>
-                          <TableCell className="text-xs">{format(new Date(sale.created_at), "MMM dd, yyyy HH:mm")}</TableCell>
-                          <TableCell className="text-xs">{sale.customers?.name || "Walk-in Customer"}</TableCell>
-                          <TableCell className="font-bold text-xs">{formatPrice(Number(sale.total_amount))}</TableCell>
-                          <TableCell>
-                            <Badge variant={sale.payment_method === "cash" ? "default" : "secondary"} className="text-[10px]">
-                              {sale.payment_method}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => viewDetails(sale)}>
-                              <Eye className="h-3.5 w-3.5 mr-1" /> View
-                            </Button>
+                      {filteredSales.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={6} className="text-center py-6 text-xs text-muted-foreground">
+                            {salesSearchQuery ? `No sales receipts found matching "${salesSearchQuery}"` : "No sales receipts recorded in this period."}
                           </TableCell>
                         </TableRow>
-                      ))}
+                      ) : (
+                        filteredSales.map((sale) => (
+                          <TableRow key={sale.id}>
+                            <TableCell className="font-mono text-xs font-bold text-primary">{sale.receipt_number}</TableCell>
+                            <TableCell className="text-xs">{format(new Date(sale.created_at), "MMM dd, yyyy HH:mm")}</TableCell>
+                            <TableCell className="text-xs font-medium">{sale.customers?.name || "Walk-in Customer"}</TableCell>
+                            <TableCell className="font-bold text-xs">{formatPrice(Number(sale.total_amount))}</TableCell>
+                            <TableCell>
+                              <Badge variant={sale.payment_method === "cash" ? "default" : "secondary"} className="text-[10px] uppercase">
+                                {sale.payment_method}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right space-x-1.5">
+                              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => viewDetails(sale)}>
+                                <Eye className="h-3.5 w-3.5 mr-1" /> View
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 text-xs text-destructive hover:bg-destructive/10 border-destructive/30"
+                                onClick={() => confirmDeleteSale(sale)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
                     </TableBody>
                   </Table>
                 </CardContent>
@@ -950,60 +1060,115 @@ const Reports = () => {
         </main>
       </div>
 
+      {/* Sale Details Dialog */}
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Sale Receipt Details</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <ShoppingBag className="h-5 w-5 text-primary" /> Sale Receipt Details
+            </DialogTitle>
             <DialogDescription>Receipt: {selectedSale?.receipt_number}</DialogDescription>
           </DialogHeader>
           {selectedSale && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4 text-sm">
+              <div className="grid grid-cols-2 gap-4 text-sm bg-muted/20 p-3 rounded-lg border">
                 <div>
-                  <p className="text-muted-foreground">Date</p>
-                  <p className="font-medium">{format(new Date(selectedSale.created_at), "PPP HH:mm")}</p>
+                  <p className="text-xs text-muted-foreground">Date & Time</p>
+                  <p className="font-medium text-sm">{format(new Date(selectedSale.created_at), "PPP HH:mm")}</p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground">Customer</p>
-                  <p className="font-medium">{selectedSale.customers?.name || "Walk-in Customer"}</p>
+                  <p className="text-xs text-muted-foreground">Customer</p>
+                  <p className="font-medium text-sm">{selectedSale.customers?.name || "Walk-in Customer"}</p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground">Payment Method</p>
-                  <p className="font-medium capitalize">{selectedSale.payment_method}</p>
+                  <p className="text-xs text-muted-foreground">Payment Method</p>
+                  <p className="font-medium text-sm capitalize">{selectedSale.payment_method}</p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground">Total</p>
-                  <p className="font-medium text-lg text-primary">{formatPrice(Number(selectedSale.total_amount))}</p>
+                  <p className="text-xs text-muted-foreground">Total Paid</p>
+                  <p className="font-bold text-base text-primary">{formatPrice(Number(selectedSale.total_amount))}</p>
                 </div>
               </div>
 
               <div>
                 <h4 className="font-semibold mb-2 text-xs uppercase text-muted-foreground">Items Sold</h4>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Product Name</TableHead>
-                      <TableHead>Qty</TableHead>
-                      <TableHead>Price</TableHead>
-                      <TableHead className="text-right">Subtotal</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {selectedSale.sale_items?.map((item, idx) => (
-                      <TableRow key={idx}>
-                        <TableCell>{item.product_name}</TableCell>
-                        <TableCell>{item.quantity}</TableCell>
-                        <TableCell>{formatPrice(Number(item.unit_price))}</TableCell>
-                        <TableCell className="text-right font-bold">{formatPrice(Number(item.total_price || item.subtotal || 0))}</TableCell>
+                <div className="border rounded-md overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="h-8 bg-muted/40">
+                        <TableHead className="text-xs py-1">Product Name</TableHead>
+                        <TableHead className="text-xs py-1">Qty</TableHead>
+                        <TableHead className="text-xs py-1">Price</TableHead>
+                        <TableHead className="text-xs py-1 text-right">Subtotal</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {selectedSale.sale_items?.map((item, idx) => (
+                        <TableRow key={idx} className="h-8 text-xs">
+                          <TableCell className="font-medium py-1">{item.product_name}</TableCell>
+                          <TableCell className="py-1">{item.quantity}</TableCell>
+                          <TableCell className="py-1">{formatPrice(Number(item.unit_price))}</TableCell>
+                          <TableCell className="text-right font-bold py-1">{formatPrice(Number(item.total_price || item.subtotal || 0))}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
+
+              <DialogFooter className="flex items-center justify-between sm:justify-between pt-2 border-t">
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={() => {
+                    if (selectedSale) confirmDeleteSale(selectedSale);
+                  }}
+                >
+                  <Trash2 className="h-3.5 w-3.5 mr-1.5" /> Delete & Void This Sale
+                </Button>
+                <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setDetailsOpen(false)}>
+                  Close
+                </Button>
+              </DialogFooter>
             </div>
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Alert Dialog */}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-5 w-5 text-destructive" /> Void & Delete Sale Receipt?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2 text-xs">
+              <p>
+                Are you sure you want to permanently delete receipt{" "}
+                <strong className="text-foreground">#{saleToDelete?.receipt_number}</strong> (Total:{" "}
+                <strong className="text-foreground">{formatPrice(Number(saleToDelete?.total_amount || 0))}</strong>)?
+              </p>
+              <p className="text-destructive font-medium">
+                This action will delete the sale records from both local offline database and cloud storage, and remove it from all revenue calculations.
+              </p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90 text-white"
+              onClick={(e) => {
+                e.preventDefault();
+                executeDeleteSale();
+              }}
+              disabled={deleting}
+            >
+              {deleting ? "Deleting..." : "Confirm & Delete Sale"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
