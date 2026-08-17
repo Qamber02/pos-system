@@ -194,12 +194,14 @@ export const CheckoutDialog = ({
         if (item.repairTicketId) {
           const ticket = await db.repairTickets.get(item.repairTicketId);
           if (ticket) {
+            const nowIso = new Date().toISOString();
+            const nowTimestamp = Date.now();
             const updatedTicket = {
               ...ticket,
               status: 'completed' as const,
               synced: false,
-              lastModified: Date.now(),
-              updated_at: new Date().toISOString()
+              lastModified: nowTimestamp,
+              updated_at: nowIso
             };
             await syncService.queueOperation('repairTickets', 'update', updatedTicket);
 
@@ -212,10 +214,42 @@ export const CheckoutDialog = ({
               changed_by: profile.id,
               notes: `Paid in full at POS (Receipt ${receiptNumber})`,
               synced: false,
-              lastModified: Date.now(),
-              created_at: new Date().toISOString()
+              lastModified: nowTimestamp,
+              created_at: nowIso
             };
             await syncService.queueOperation('repairTicketHistory', 'insert', historyEntry);
+
+            // Update attached parts from 'reserved' to 'consumed'
+            const attachedParts = await db.repairTicketParts.where('repair_ticket_id').equals(ticket.id).toArray();
+            for (const part of attachedParts) {
+              if (part.status === 'reserved') {
+                const updatedPart = {
+                  ...part,
+                  status: 'consumed' as const,
+                  status_reason: `Installed & settled via POS checkout (Receipt ${receiptNumber})`,
+                  status_updated_at: nowIso,
+                  synced: false,
+                  lastModified: nowTimestamp,
+                  updated_at: nowIso
+                };
+                await syncService.queueOperation('repairTicketParts', 'update', updatedPart);
+
+                const partHist = {
+                  id: crypto.randomUUID(),
+                  repair_ticket_part_id: part.id,
+                  repair_ticket_id: ticket.id,
+                  user_id: profile.id,
+                  previous_status: 'reserved',
+                  new_status: 'consumed',
+                  reason: `Completed via POS checkout (Receipt ${receiptNumber})`,
+                  changed_by: profile.id,
+                  synced: false,
+                  lastModified: nowTimestamp,
+                  created_at: nowIso
+                };
+                await syncService.queueOperation('repairTicketPartHistory', 'insert', partHist);
+              }
+            }
           }
           return [];
         }

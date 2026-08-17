@@ -565,7 +565,7 @@ const Wholesalers = () => {
                               <TableCell className="text-xs font-semibold text-emerald-600">{formatCurrency(i.amount_paid)}</TableCell>
                               <TableCell>
                                 <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium capitalize ${
-                                  i.status === 'settled' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400' :
+                                  (i.status === 'paid' || i.status === 'settled') ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400' :
                                   i.status === 'partial' ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-400' :
                                   'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400'
                                 }`}>

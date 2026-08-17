@@ -8,10 +8,10 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Clock, Smartphone, User, DollarSign, ArrowRight, CheckCircle2, AlertCircle, Wrench, ShieldAlert, UserCheck, Cpu, Code } from "lucide-react";
+import { Clock, Smartphone, User, DollarSign, ArrowRight, CheckCircle2, AlertCircle, Wrench, ShieldAlert, Cpu, Code } from "lucide-react";
 import { toast } from "sonner";
 import { syncService } from "@/lib/syncService";
-import { db, CachedCustomer, CachedRepairTicket, CachedRepairTicketHistory, CachedTechnician, RepairStatus } from "@/lib/db";
+import { db, CachedCustomer, CachedRepairTicket, CachedRepairTicketHistory, RepairStatus } from "@/lib/db";
 import { useLiveQuery } from "dexie-react-hooks";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { TicketPartsManager } from "@/components/repair/TicketPartsManager";
@@ -24,7 +24,6 @@ interface RepairTicketDetailModalProps {
   ticket: CachedRepairTicket | null;
   history: CachedRepairTicketHistory[];
   customer?: CachedCustomer | null;
-  technicians?: CachedTechnician[];
 }
 
 const statusColorMap: Record<RepairStatus, string> = {
@@ -59,8 +58,7 @@ export const RepairTicketDetailModal = ({
   onOpenChange,
   ticket,
   history,
-  customer,
-  technicians = []
+  customer
 }: RepairTicketDetailModalProps) => {
   const formatCurrency = useFormatCurrency();
   const [updating, setUpdating] = useState(false);
@@ -125,29 +123,7 @@ export const RepairTicketDetailModal = ({
     }))
   ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-  const handleAssignTech = async (techId: string) => {
-    setUpdating(true);
-    try {
-      const nowIso = new Date().toISOString();
-      const nowTimestamp = Date.now();
 
-      const updatedTicket: CachedRepairTicket = {
-        ...ticket,
-        assigned_tech_id: techId || null,
-        synced: false,
-        lastModified: nowTimestamp,
-        updated_at: nowIso
-      };
-
-      await syncService.queueOperation('repairTickets', 'update', updatedTicket);
-      const tech = technicians.find(t => t.id === techId);
-      toast.success(tech ? `Assigned to ${tech.name}` : 'Unassigned technician');
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to assign technician');
-    } finally {
-      setUpdating(false);
-    }
-  };
 
   const handleStatusChange = async (newStatus: RepairStatus) => {
     if (newStatus === ticket.status) return;
@@ -260,32 +236,14 @@ export const RepairTicketDetailModal = ({
             <Card>
               <CardContent className="pt-4 space-y-3">
                 <div className="flex items-center justify-between text-sm font-semibold text-muted-foreground border-b pb-2">
-                  <span className="flex items-center gap-2"><User className="h-4 w-4" /> Customer & Technician</span>
+                  <span className="flex items-center gap-2"><User className="h-4 w-4" /> Customer Information</span>
                   <span className="flex items-center gap-2"><DollarSign className="h-4 w-4" /> Financials</span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   <div>
                     <p className="font-medium">{customer ? customer.name : 'Walk-in Customer'}</p>
                     {customer?.phone && <p className="text-xs text-muted-foreground">{customer.phone}</p>}
-
-                    <div className="mt-2 space-y-1">
-                      <Label className="text-[10px] text-muted-foreground uppercase flex items-center gap-1">
-                        <UserCheck className="h-3 w-3" /> Assigned Tech
-                      </Label>
-                      <Select value={ticket.assigned_tech_id || "none"} onValueChange={(val) => handleAssignTech(val === "none" ? "" : val)}>
-                        <SelectTrigger className="h-7 text-xs">
-                          <SelectValue placeholder="Assign technician" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">Unassigned</SelectItem>
-                          {technicians.map((t) => (
-                            <SelectItem key={t.id} value={t.id}>
-                              {t.name} {t.specialty ? `(${t.specialty})` : ''}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                    {customer?.email && <p className="text-xs text-muted-foreground">{customer.email}</p>}
                   </div>
                   <div className="text-right space-y-1">
                     <p className="text-xs font-bold text-primary">Total Customer Charge: <span>{formatCurrency(grandTotalInvoice)}</span></p>

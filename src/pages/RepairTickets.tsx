@@ -8,14 +8,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Search, RefreshCw, Wrench, Clock, CheckCircle2, AlertCircle, Eye, Edit, Smartphone, UserCheck, DollarSign, Cpu, Code } from "lucide-react";
+import { Plus, Search, RefreshCw, Wrench, Clock, CheckCircle2, AlertCircle, Eye, Edit, Smartphone, DollarSign, Cpu, Code } from "lucide-react";
 import { toast } from "sonner";
 import { db, CachedRepairTicket, RepairStatus } from "@/lib/db";
 import { syncService } from "@/lib/syncService";
 import { useLiveQuery } from "dexie-react-hooks";
 import { RepairTicketDialog } from "@/components/repair/RepairTicketDialog";
 import { RepairTicketDetailModal } from "@/components/repair/RepairTicketDetailModal";
-import { TechnicianDialog } from "@/components/repair/TechnicianDialog";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 
 const statusColorMap: Record<RepairStatus, { label: string; className: string }> = {
@@ -41,7 +40,6 @@ const RepairTickets = () => {
   const [typeFilter, setTypeFilter] = useState<'all' | 'hardware' | 'software'>('all');
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [techDialogOpen, setTechDialogOpen] = useState(false);
   const [editingTicket, setEditingTicket] = useState<CachedRepairTicket | null>(null);
   const [selectedTicket, setSelectedTicket] = useState<CachedRepairTicket | null>(null);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
@@ -49,7 +47,6 @@ const RepairTickets = () => {
   // Live queries from local Dexie IndexedDB
   const customers = useLiveQuery(() => db.customers.toArray()) || [];
   const deviceIdentifiers = useLiveQuery(() => db.deviceIdentifiers.toArray()) || [];
-  const technicians = useLiveQuery(() => db.technicians.toArray()) || [];
   const history = useLiveQuery(() => db.repairTicketHistory.toArray()) || [];
 
   const tickets = useLiveQuery(async () => {
@@ -125,14 +122,11 @@ const RepairTickets = () => {
                 <Wrench className="h-5 w-5 text-primary" />
                 Repair Job Management
               </h1>
-              <p className="text-xs text-muted-foreground">Track intake, parts, technician assignment, and stage progress</p>
+              <p className="text-xs text-muted-foreground">Track intake, parts, warranty, and stage progress</p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="h-9 text-xs" onClick={() => setTechDialogOpen(true)}>
-              <UserCheck className="mr-1.5 h-3.5 w-3.5 text-primary" /> Technicians
-            </Button>
             <Button variant="outline" size="sm" className="h-9 text-xs" onClick={handleSync} disabled={isSyncing}>
               <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${isSyncing ? "animate-spin" : ""}`} />
               {isSyncing ? "Syncing..." : "Sync"}
@@ -378,13 +372,6 @@ const RepairTickets = () => {
         ticket={selectedTicket}
         history={history}
         customer={selectedTicket?.customer}
-        technicians={technicians}
-      />
-
-      {/* Technician Registration Dialog */}
-      <TechnicianDialog
-        open={techDialogOpen}
-        onOpenChange={setTechDialogOpen}
       />
     </div>
   );

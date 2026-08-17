@@ -9,10 +9,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { Wrench, Truck, Package, Edit3, List, ShieldCheck, Sparkles, Cpu, Code, X, PlusCircle, DollarSign, Percent } from "lucide-react";
+import { Wrench, Truck, Package, Edit3, List, ShieldCheck, Sparkles, Cpu, Code, X, PlusCircle, DollarSign, Percent, CheckCircle2, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { syncService } from "@/lib/syncService";
-import { db, CachedCustomer, CachedDeviceIdentifier, CachedRepairTicket, RepairStatus, CachedRepairTicketPart, CachedWholesalerIntake, CachedProduct } from "@/lib/db";
+import { db, CachedCustomer, CachedDeviceIdentifier, CachedRepairTicket, RepairStatus, CachedRepairTicketPart, CachedRepairTicketPartHistory, CachedWholesalerIntake, CachedWholesalerPayment, CachedProduct } from "@/lib/db";
 import { useLiveQuery } from "dexie-react-hooks";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 
@@ -72,6 +72,7 @@ export const RepairTicketDialog = ({
   const [attachPartProductId, setAttachPartProductId] = useState<string>("");
   const [customPartName, setCustomPartName] = useState<string>("");
   const [attachWholesalerId, setAttachWholesalerId] = useState<string>("");
+  const [attachWholesalerPaid, setAttachWholesalerPaid] = useState<boolean>(false);
   const [attachPartQty, setAttachPartQty] = useState<string>("1");
   const [attachPartUnitCost, setAttachPartUnitCost] = useState<string>(""); // Wholesaler Cost (e.g. 1800)
 
@@ -81,6 +82,7 @@ export const RepairTicketDialog = ({
   const [addonPrice, setAddonPrice] = useState<string>(""); // Customer Retail Charge e.g. 200
   const [addonSourceMode, setAddonSourceMode] = useState<'shop' | 'wholesaler'>('wholesaler');
   const [addonWholesalerId, setAddonWholesalerId] = useState<string>(""); // Separate Addon Wholesaler
+  const [addonWholesalerPaid, setAddonWholesalerPaid] = useState<boolean>(false);
   const [addonUnitCost, setAddonUnitCost] = useState<string>(""); // Addon Wholesaler cost e.g. 100
 
   const products = useLiveQuery(() => db.products.toArray()) || [];
@@ -125,6 +127,7 @@ export const RepairTicketDialog = ({
     setAttachPartProductId("");
     setCustomPartName("");
     setAttachWholesalerId("");
+    setAttachWholesalerPaid(false);
     setAttachPartQty("1");
     setAttachPartUnitCost("");
   };
@@ -135,6 +138,7 @@ export const RepairTicketDialog = ({
     setAddonPrice("");
     setAddonUnitCost("");
     setAddonWholesalerId("");
+    setAddonWholesalerPaid(false);
     setAddonSourceMode("wholesaler");
   };
 
@@ -157,7 +161,7 @@ export const RepairTicketDialog = ({
   const isPartConfigured = repairType === 'hardware' && Boolean(customPartName.trim() || attachPartProductId);
   const partCostNum = isPartConfigured ? ((parseFloat(attachPartUnitCost) || 0) * (parseInt(attachPartQty) || 1)) : 0;
 
-  // Add-on cost is ONLY counted when includeAddon is true AND addonName is specified AND unit cost > 0
+  // Add-on cost is counted when includeAddon is true AND addonName is specified
   const isAddonActive = includeAddon && addonName.trim().length > 0;
   const addonCostNum = isAddonActive ? (parseFloat(addonUnitCost) || 0) : 0;
   const addonPriceNum = isAddonActive ? (parseFloat(addonPrice) || 0) : 0;
@@ -321,22 +325,42 @@ export const RepairTicketDialog = ({
             };
             await syncService.queueOperation('repairTicketParts', 'insert', partRecord);
 
+            // Audit history log for part
+            const partHistoryEntry: CachedRepairTicketPartHistory = {
+              id: crypto.randomUUID(),
+              repair_ticket_part_id: partRecord.id,
+              repair_ticket_id: ticketId,
+              user_id: activeUserId,
+              previous_status: null,
+              new_status: 'reserved',
+              reason: `Attached part ${resolvedPartName} (Cost: ${partCost}, Price: ${partCost})${attachWholesalerId ? ' [Wholesaler Consignment]' : ''}`,
+              changed_by: activeUserId,
+              synced: false,
+              lastModified: nowTimestamp,
+              created_at: nowIso
+            };
+            await syncService.queueOperation('repairTicketPartHistory', 'insert', partHistoryEntry);
+
             // Record to main part wholesaler screen
             if (attachWholesalerId) {
               const wholesaler = wholesalers.find(w => w.id === attachWholesalerId);
+              const totalCost = qty * partCost;
+              const isPaid = attachWholesalerPaid;
+              const intakeId = crypto.randomUUID();
+
               const intakeRecord: CachedWholesalerIntake = {
-                id: crypto.randomUUID(),
+                id: intakeId,
                 user_id: activeUserId,
                 wholesaler_id: attachWholesalerId,
                 product_id: resolvedProductId,
                 item_name: `${resolvedPartName} (Ticket ${ticketNumber})`,
                 quantity: qty,
                 agreed_unit_cost: partCost,
-                total_cost: qty * partCost,
-                amount_paid: 0,
+                total_cost: totalCost,
+                amount_paid: isPaid ? totalCost : 0,
                 intake_date: nowIso,
-                status: 'pending',
-                notes: `Sourced for Repair Ticket ${ticketNumber} (${deviceName.trim()})`,
+                status: isPaid ? 'paid' : 'pending',
+                notes: `Sourced for Repair Ticket ${ticketNumber} (${deviceName.trim()})${isPaid ? ' - Paid upfront' : ' - Pending credit'}`,
                 synced: false,
                 lastModified: nowTimestamp,
                 created_at: nowIso,
@@ -344,13 +368,31 @@ export const RepairTicketDialog = ({
               };
 
               await syncService.queueOperation('wholesalerIntakes', 'insert', intakeRecord);
-              toast.success(`Logged ${formatCurrency(qty * partCost)} part cost to Wholesaler "${wholesaler?.name || 'Wholesaler'}"`);
+
+              if (isPaid && totalCost > 0) {
+                const paymentRecord: CachedWholesalerPayment = {
+                  id: crypto.randomUUID(),
+                  user_id: activeUserId,
+                  wholesaler_id: attachWholesalerId,
+                  intake_id: intakeId,
+                  amount: totalCost,
+                  payment_method: 'cash',
+                  payment_date: nowIso,
+                  notes: `Upfront payment for ${resolvedPartName} (Ticket ${ticketNumber})`,
+                  synced: false,
+                  lastModified: nowTimestamp,
+                  created_at: nowIso
+                };
+                await syncService.queueOperation('wholesalerPayments', 'insert', paymentRecord);
+              }
+
+              toast.success(`Logged ${formatCurrency(totalCost)} part cost to Wholesaler "${wholesaler?.name || 'Wholesaler'}" (${isPaid ? 'PAID' : 'PENDING CREDIT'})`);
             }
           }
         }
 
         // 2. HANDLE ADD-ON ACCESSORY (Separate Wholesaler Option)
-        if (isAddonActive && addonPriceNum > 0) {
+        if (isAddonActive) {
           const addonCost = parseFloat(addonUnitCost) || 0;
           const targetAddonWholesalerId = addonSourceMode === 'wholesaler' ? (addonWholesalerId || null) : null;
 
@@ -389,11 +431,30 @@ export const RepairTicketDialog = ({
           };
           await syncService.queueOperation('repairTicketParts', 'insert', addonPartRecord);
 
+          // Add history entry for addon part
+          const addonPartHistory: CachedRepairTicketPartHistory = {
+            id: crypto.randomUUID(),
+            repair_ticket_part_id: addonPartRecord.id,
+            repair_ticket_id: ticketId,
+            user_id: activeUserId,
+            previous_status: null,
+            new_status: 'reserved',
+            reason: `Attached add-on ${addonName.trim()} (Cost: ${addonCost}, Price: ${addonPriceNum})${targetAddonWholesalerId ? ' [Wholesaler Consignment]' : ''}`,
+            changed_by: activeUserId,
+            synced: false,
+            lastModified: nowTimestamp,
+            created_at: nowIso
+          };
+          await syncService.queueOperation('repairTicketPartHistory', 'insert', addonPartHistory);
+
           // IF SOURCED FROM SEPARATE ADD-ON WHOLESALER, LOG TO THAT WHOLESALER'S INTAKE SCREEN
-          if (targetAddonWholesalerId && addonCost > 0) {
+          if (targetAddonWholesalerId) {
             const addonWholesaler = wholesalers.find(w => w.id === targetAddonWholesalerId);
+            const isAddonPaid = addonWholesalerPaid;
+            const addonIntakeId = crypto.randomUUID();
+
             const intakeRecord: CachedWholesalerIntake = {
-              id: crypto.randomUUID(),
+              id: addonIntakeId,
               user_id: activeUserId,
               wholesaler_id: targetAddonWholesalerId,
               product_id: addonProdId,
@@ -401,10 +462,10 @@ export const RepairTicketDialog = ({
               quantity: 1,
               agreed_unit_cost: addonCost,
               total_cost: addonCost,
-              amount_paid: 0,
+              amount_paid: isAddonPaid ? addonCost : 0,
               intake_date: nowIso,
-              status: 'pending',
-              notes: `Add-on accessory sourced for Ticket ${ticketNumber} (${deviceName.trim()})`,
+              status: isAddonPaid ? 'paid' : 'pending',
+              notes: `Add-on accessory sourced for Repair Ticket ${ticketNumber} (${deviceName.trim()})${isAddonPaid ? ' - Paid upfront' : ' - Pending credit'}`,
               synced: false,
               lastModified: nowTimestamp,
               created_at: nowIso,
@@ -412,7 +473,25 @@ export const RepairTicketDialog = ({
             };
 
             await syncService.queueOperation('wholesalerIntakes', 'insert', intakeRecord);
-            toast.success(`Logged ${formatCurrency(addonCost)} Add-on cost to Wholesaler "${addonWholesaler?.name || 'Wholesaler'}"`);
+
+            if (isAddonPaid && addonCost > 0) {
+              const paymentRecord: CachedWholesalerPayment = {
+                id: crypto.randomUUID(),
+                user_id: activeUserId,
+                wholesaler_id: targetAddonWholesalerId,
+                intake_id: addonIntakeId,
+                amount: addonCost,
+                payment_method: 'cash',
+                payment_date: nowIso,
+                notes: `Upfront payment for add-on ${addonName.trim()} (Ticket ${ticketNumber})`,
+                synced: false,
+                lastModified: nowTimestamp,
+                created_at: nowIso
+              };
+              await syncService.queueOperation('wholesalerPayments', 'insert', paymentRecord);
+            }
+
+            toast.success(`Logged ${formatCurrency(addonCost)} Add-on cost to Wholesaler "${addonWholesaler?.name || 'Wholesaler'}" (${isAddonPaid ? 'PAID' : 'PENDING CREDIT'})`);
           }
 
           toast.success(`Add-on "${addonName.trim()}" attached (${formatCurrency(addonPriceNum)})`);
@@ -446,6 +525,7 @@ export const RepairTicketDialog = ({
     setAttachPartProductId("");
     setCustomPartName("");
     setAttachWholesalerId("");
+    setAttachWholesalerPaid(false);
     setAttachPartQty("1");
     setAttachPartUnitCost("");
 
@@ -454,6 +534,7 @@ export const RepairTicketDialog = ({
     setAddonPrice("");
     setAddonSourceMode("wholesaler");
     setAddonWholesalerId("");
+    setAddonWholesalerPaid(false);
     setAddonUnitCost("");
   };
 
@@ -470,33 +551,37 @@ export const RepairTicketDialog = ({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-3.5 py-1 text-xs">
-          {/* REPAIR TYPE TOGGLE: HARDWARE VS SOFTWARE */}
-          <div className="p-1.5 bg-muted/60 dark:bg-muted/40 rounded-xl border flex items-center gap-1.5">
+        <div className="space-y-4 py-1 text-xs">
+          {/* Repair Service Type Toggle: Hardware vs Software */}
+          <div className="grid grid-cols-2 gap-2 p-1 bg-muted/60 rounded-lg border">
             <button
               type="button"
-              onClick={() => setRepairType('hardware')}
-              className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition-all ${
-                repairType === 'hardware'
-                  ? 'bg-primary text-primary-foreground shadow-md'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-background/60'
+              onClick={() => { setRepairType("hardware"); }}
+              className={`flex items-center justify-center gap-2 py-2 px-3 rounded-md text-xs font-semibold transition-all ${
+                repairType === "hardware"
+                  ? "bg-background text-primary shadow-sm border border-primary/20"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
               <Cpu className="h-4 w-4" />
-              Hardware Repair
-              <span className="text-[10px] font-normal opacity-80">(Parts + Labor)</span>
+              <span>Hardware Repair</span>
+              <span className="text-[10px] font-normal opacity-80">(Parts / Screen / Battery)</span>
             </button>
+
             <button
               type="button"
-              onClick={() => setRepairType('software')}
-              className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition-all ${
-                repairType === 'software'
-                  ? 'bg-indigo-600 text-white shadow-md'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-background/60'
+              onClick={() => {
+                setRepairType("software");
+                handleClearHardwarePart();
+              }}
+              className={`flex items-center justify-center gap-2 py-2 px-3 rounded-md text-xs font-semibold transition-all ${
+                repairType === "software"
+                  ? "bg-background text-indigo-600 dark:text-indigo-400 shadow-sm border border-indigo-500/20"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
               <Code className="h-4 w-4" />
-              Software Service
+              <span>Software Service</span>
               <span className="text-[10px] font-normal opacity-80">(Flashing / OS / Unlock)</span>
             </button>
           </div>
@@ -660,7 +745,7 @@ export const RepairTicketDialog = ({
 
                 <div className="space-y-1">
                   <Label className="text-[11px] flex items-center gap-1 text-foreground">
-                    <Truck className="h-3 w-3 text-purple-600" /> Sourced Wholesaler
+                    <Truck className="h-3 w-3 text-purple-600" /> Sourced Wholesaler / Reseller
                   </Label>
                   <Select value={attachWholesalerId} onValueChange={setAttachWholesalerId}>
                     <SelectTrigger className="h-8 text-xs bg-background text-foreground border-input">
@@ -704,10 +789,43 @@ export const RepairTicketDialog = ({
                   </div>
                 </div>
               )}
+
+              {/* Wholesaler Payment Status (Paid vs Unpaid Credit) */}
+              {attachWholesalerId && isPartConfigured && (
+                <div className="flex items-center justify-between pt-1.5 border-t border-border/60">
+                  <Label className="text-[10px] font-medium text-foreground flex items-center gap-1">
+                    <DollarSign className="h-3 w-3 text-emerald-600" /> Reseller Payment Status:
+                  </Label>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setAttachWholesalerPaid(false)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors flex items-center gap-1 ${
+                        !attachWholesalerPaid
+                          ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800 font-bold'
+                          : 'bg-background text-muted-foreground border-input hover:bg-muted'
+                      }`}
+                    >
+                      <Clock className="h-2.5 w-2.5" /> Unpaid (Credit Consignment)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAttachWholesalerPaid(true)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors flex items-center gap-1 ${
+                        attachWholesalerPaid
+                          ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800 font-bold'
+                          : 'bg-background text-muted-foreground border-input hover:bg-muted'
+                      }`}
+                    >
+                      <CheckCircle2 className="h-2.5 w-2.5" /> Paid in Full
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
-          {/* 2. ADD-ON ACCESSORIES SECTION WITH EXPLICIT TOGGLE & ZERO GHOST COSTS */}
+          {/* 2. ADD-ON ACCESSORIES SECTION WITH EXPLICIT TOGGLE */}
           {!ticketToEdit && (
             <div className="p-3 bg-blue-50/40 dark:bg-blue-950/20 rounded-lg border border-blue-200/60 dark:border-blue-900/50 space-y-2.5">
               <div className="flex items-center justify-between">
@@ -802,7 +920,7 @@ export const RepairTicketDialog = ({
                       <>
                         <div className="space-y-1">
                           <Label className="text-[10px] font-medium text-foreground flex items-center gap-1">
-                            <Truck className="h-3 w-3 text-purple-600" /> Separate Wholesaler
+                            <Truck className="h-3 w-3 text-purple-600" /> Reseller / Wholesaler
                           </Label>
                           <Select value={addonWholesalerId} onValueChange={setAddonWholesalerId}>
                             <SelectTrigger className="h-7 text-xs font-medium border-purple-300 dark:border-purple-800 bg-background text-foreground">
@@ -846,6 +964,39 @@ export const RepairTicketDialog = ({
                       </div>
                     )}
                   </div>
+
+                  {/* Addon Wholesaler Payment Status (Paid vs Unpaid Credit) */}
+                  {addonSourceMode === 'wholesaler' && addonWholesalerId && (
+                    <div className="flex items-center justify-between pt-1.5 border-t border-blue-200/50 dark:border-blue-900/40">
+                      <Label className="text-[10px] font-medium text-foreground flex items-center gap-1">
+                        <DollarSign className="h-3 w-3 text-emerald-600" /> Add-on Reseller Payment Status:
+                      </Label>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setAddonWholesalerPaid(false)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors flex items-center gap-1 ${
+                            !addonWholesalerPaid
+                              ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800 font-bold'
+                              : 'bg-background text-muted-foreground border-input hover:bg-muted'
+                          }`}
+                        >
+                          <Clock className="h-2.5 w-2.5" /> Unpaid (Credit)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAddonWholesalerPaid(true)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors flex items-center gap-1 ${
+                            addonWholesalerPaid
+                              ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800 font-bold'
+                              : 'bg-background text-muted-foreground border-input hover:bg-muted'
+                          }`}
+                        >
+                          <CheckCircle2 className="h-2.5 w-2.5" /> Paid in Full
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {addonPriceNum > 0 && addonCostNum > 0 && (
                     <div className="text-[10px] flex items-center justify-between text-muted-foreground bg-background/80 px-2.5 py-1.5 rounded-md border border-blue-200/50">
@@ -942,9 +1093,9 @@ export const RepairTicketDialog = ({
           </div>
 
           <div className="space-y-1">
-            <Label className="text-xs font-medium text-foreground">Technician Notes</Label>
+            <Label className="text-xs font-medium text-foreground">Repair / Internal Notes</Label>
             <Textarea
-              placeholder="Additional repair notes or condition details upon intake"
+              placeholder="Additional repair notes, diagnostic details, or condition upon intake"
               rows={2}
               className="text-xs bg-background text-foreground"
               value={notes}

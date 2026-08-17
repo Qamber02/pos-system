@@ -535,7 +535,7 @@ const Settings = () => {
                 <div className="space-y-1">
                   <h4 className="font-medium text-primary">Load Sample Demo Data</h4>
                   <p className="text-sm text-muted-foreground">
-                    Populate demo products, IMEIs, repair tickets, technicians, and customers into your shop workspace.
+                    Populate demo products, IMEIs, repair tickets, and customers into your shop workspace.
                   </p>
                 </div>
                 <Button

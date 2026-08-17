@@ -106,25 +106,13 @@ export async function seedDemoDataForUser() {
       await syncService.queueOperation("customers", "insert", cust);
     }
 
-    // 7. Technicians
-    const technicians = [
-      { id: crypto.randomUUID(), user_id: userId, name: "Marcus Vance", email: "marcus.vance@techfix.com", phone: "+1 555-9011", specialty: "Micro-soldering, Face ID & IC Repair", status: "active" as const, synced: false, lastModified: nowTimestamp },
-      { id: crypto.randomUUID(), user_id: userId, name: "Elena Rostova", email: "elena.r@techfix.com", phone: "+1 555-9022", specialty: "Screen & Battery Replacement", status: "active" as const, synced: false, lastModified: nowTimestamp }
-    ];
-
-    for (const tech of technicians) {
-      await syncService.queueOperation("technicians", "insert", tech);
-    }
-
-    // 8. Repair Tickets
+    // 7. Repair Tickets
     const john = customers[0];
     const sarah = customers[1];
-    const marcus = technicians[0];
-    const elena = technicians[1];
 
     const repairTickets = [
-      { id: crypto.randomUUID(), user_id: userId, ticket_number: "REP-1001", customer_id: john.id, device_name: "iPhone 13 Pro Max", serial_or_imei: "351234567890123", issue_description: "Cracked front glass screen, touch unresponsive in upper right quadrant", estimated_cost: 180.00, deposit_paid: 50.00, status: "in_repair" as const, assigned_tech_id: marcus.id, notes: "Customer requested original color soft OLED screen.", synced: false, lastModified: nowTimestamp, created_at: nowIso, updated_at: nowIso },
-      { id: crypto.randomUUID(), user_id: userId, ticket_number: "REP-1002", customer_id: sarah.id, device_name: "Samsung Galaxy S22 Ultra", serial_or_imei: "991122334455667", issue_description: "Battery draining rapidly and device overheating", estimated_cost: 95.00, deposit_paid: 20.00, status: "ready_for_pickup" as const, assigned_tech_id: elena.id, notes: "Battery replaced and load testing completed.", synced: false, lastModified: nowTimestamp, created_at: nowIso, updated_at: nowIso }
+      { id: crypto.randomUUID(), user_id: userId, ticket_number: "REP-1001", customer_id: john.id, device_name: "iPhone 13 Pro Max", serial_or_imei: "351234567890123", issue_description: "Cracked front glass screen, touch unresponsive in upper right quadrant", estimated_cost: 180.00, deposit_paid: 50.00, status: "in_repair" as const, assigned_tech_id: null, notes: "Customer requested original color soft OLED screen.", synced: false, lastModified: nowTimestamp, created_at: nowIso, updated_at: nowIso },
+      { id: crypto.randomUUID(), user_id: userId, ticket_number: "REP-1002", customer_id: sarah.id, device_name: "Samsung Galaxy S22 Ultra", serial_or_imei: "991122334455667", issue_description: "Battery draining rapidly and device overheating", estimated_cost: 95.00, deposit_paid: 20.00, status: "ready_for_pickup" as const, assigned_tech_id: null, notes: "Battery replaced and load testing completed.", synced: false, lastModified: nowTimestamp, created_at: nowIso, updated_at: nowIso }
     ];
 
     for (const ticket of repairTickets) {

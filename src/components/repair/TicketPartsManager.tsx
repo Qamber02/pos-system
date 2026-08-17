@@ -8,9 +8,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, RotateCcw, Wrench, AlertTriangle, Truck, CheckCircle, ShieldAlert, ShoppingBag, Layers, Edit3, List } from "lucide-react";
+import { Plus, RotateCcw, Wrench, AlertTriangle, Truck, CheckCircle, ShieldAlert, ShoppingBag, Layers, Edit3, List, DollarSign, Clock, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
-import { db, CachedProduct, CachedRepairTicketPart, TicketPartStatus, CachedRepairTicketPartHistory, CachedWholesalerIntake } from "@/lib/db";
+import { db, CachedProduct, CachedRepairTicketPart, TicketPartStatus, CachedRepairTicketPartHistory, CachedWholesalerIntake, CachedWholesalerPayment } from "@/lib/db";
 import { syncService } from "@/lib/syncService";
 import { useLiveQuery } from "dexie-react-hooks";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
@@ -34,7 +34,9 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
   const [customPartName, setCustomPartName] = useState<string>("");
   const [customUnitCost, setCustomUnitCost] = useState<string>("0");
   const [customUnitPrice, setCustomUnitPrice] = useState<string>("0");
+  const [inventoryUnitCost, setInventoryUnitCost] = useState<string>("");
   const [selectedWholesalerId, setSelectedWholesalerId] = useState<string>("");
+  const [wholesalerPaid, setWholesalerPaid] = useState<boolean>(false);
   const [quantity, setQuantity] = useState<string>("1");
   const [attachType, setAttachType] = useState<'part' | 'product'>("part");
   const [filterMode, setFilterMode] = useState<'parts' | 'products' | 'all'>("parts");
@@ -46,6 +48,7 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
   const [newStatus, setNewStatus] = useState<TicketPartStatus>("returned");
   const [reason, setReason] = useState("");
 
+  const ticket = useLiveQuery(() => db.repairTickets.get(ticketId), [ticketId]);
   const products = useLiveQuery(() => db.products.toArray()) || [];
   const wholesalers = useLiveQuery(() => db.wholesalers.toArray()) || [];
 
@@ -71,12 +74,22 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
     return true; // 'all'
   });
 
+  const handleProductSelectChange = (prodId: string) => {
+    setSelectedProductId(prodId);
+    const prod = products.find(p => p.id === prodId);
+    if (prod) {
+      setInventoryUnitCost(String(prod.cost_price || 0));
+    }
+  };
+
   const handleReserveItem = async () => {
     const qtyNum = parseInt(quantity) || 1;
     if (qtyNum <= 0) {
       toast.error("Quantity must be at least 1");
       return;
     }
+
+    const isFromWholesaler = Boolean(selectedWholesalerId && selectedWholesalerId !== 'none');
 
     setLoading(true);
     try {
@@ -133,24 +146,27 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
           setLoading(false);
           return;
         }
-        cost = targetProduct.cost_price || 0;
+        cost = inventoryUnitCost !== "" ? (parseFloat(inventoryUnitCost) || 0) : (targetProduct.cost_price || 0);
         price = targetProduct.retail_price || 0;
 
-        if (targetProduct.stock_quantity < qtyNum) {
-          toast.error(`Insufficient stock! Available: ${targetProduct.stock_quantity}, requested: ${qtyNum}`);
-          setLoading(false);
-          return;
-        }
+        // If not sourced from a wholesaler, check local inventory and decrement
+        if (!isFromWholesaler) {
+          if (targetProduct.stock_quantity < qtyNum) {
+            toast.error(`Insufficient stock! Available: ${targetProduct.stock_quantity}, requested: ${qtyNum}`);
+            setLoading(false);
+            return;
+          }
 
-        // Decrement stock for inventory product
-        const updatedProduct: CachedProduct = {
-          ...targetProduct,
-          stock_quantity: targetProduct.stock_quantity - qtyNum,
-          lastModified: nowTimestamp,
-          synced: false,
-          updated_at: nowIso
-        };
-        await syncService.queueOperation('products', 'update', updatedProduct);
+          // Decrement stock for inventory product
+          const updatedProduct: CachedProduct = {
+            ...targetProduct,
+            stock_quantity: targetProduct.stock_quantity - qtyNum,
+            lastModified: nowTimestamp,
+            synced: false,
+            updated_at: nowIso
+          };
+          await syncService.queueOperation('products', 'update', updatedProduct);
+        }
       }
 
       // 1. Create repair ticket part record
@@ -164,7 +180,7 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
         unit_price: price,
         status: 'reserved',
         item_type: attachType,
-        wholesaler_id: (selectedWholesalerId && selectedWholesalerId !== 'none') ? selectedWholesalerId : null,
+        wholesaler_id: isFromWholesaler ? selectedWholesalerId : null,
         synced: false,
         lastModified: nowTimestamp,
         created_at: nowIso,
@@ -181,7 +197,7 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
         user_id: activeUserId,
         previous_status: null,
         new_status: 'reserved',
-        reason: `Attached ${targetProduct.name} (Cost: ${cost}, Price: ${price})${selectedWholesalerId ? ' [Wholesaler Consignment]' : ''}`,
+        reason: `Attached ${targetProduct.name} (Cost: ${cost}, Price: ${price})${isFromWholesaler ? ' [Wholesaler Consignment]' : ''}`,
         changed_by: activeUserId,
         synced: false,
         lastModified: nowTimestamp,
@@ -190,34 +206,59 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
       await syncService.queueOperation('repairTicketPartHistory', 'insert', historyEntry);
 
       // 3. IF WHOLESALER WAS SELECTED, LOG INTAKE FOR WHOLESALER SCREEN
-      if (selectedWholesalerId && selectedWholesalerId !== 'none') {
+      if (isFromWholesaler) {
         const wholesaler = wholesalers.find(w => w.id === selectedWholesalerId);
+        const totalCost = qtyNum * cost;
+        const isPaid = wholesalerPaid;
+        const intakeId = crypto.randomUUID();
+        const ticketNum = ticket?.ticket_number || ticketId.slice(0, 8);
+
         const intakeRecord: CachedWholesalerIntake = {
-          id: crypto.randomUUID(),
+          id: intakeId,
           user_id: activeUserId,
           wholesaler_id: selectedWholesalerId,
           product_id: targetProduct.id,
-          item_name: targetProduct.name,
+          item_name: `${targetProduct.name} (Ticket ${ticketNum})`,
           quantity: qtyNum,
           agreed_unit_cost: cost,
-          total_cost: qtyNum * cost,
-          amount_paid: 0,
+          total_cost: totalCost,
+          amount_paid: isPaid ? totalCost : 0,
           intake_date: nowIso,
-          status: 'pending',
-          notes: `Attached to repair ticket ${ticketId.slice(0, 8)}`,
+          status: isPaid ? 'paid' : 'pending',
+          notes: `Attached to Repair Ticket ${ticketNum} (${ticket?.device_name || 'Device'})${isPaid ? ' - Paid upfront' : ' - Pending credit'}`,
           synced: false,
           lastModified: nowTimestamp,
           created_at: nowIso,
           updated_at: nowIso
         };
         await syncService.queueOperation('wholesalerIntakes', 'insert', intakeRecord);
-        toast.success(`Consignment logged for ${wholesaler?.name || 'Wholesaler'}`);
+
+        if (isPaid && totalCost > 0) {
+          const paymentRecord: CachedWholesalerPayment = {
+            id: crypto.randomUUID(),
+            user_id: activeUserId,
+            wholesaler_id: selectedWholesalerId,
+            intake_id: intakeId,
+            amount: totalCost,
+            payment_method: 'cash',
+            payment_date: nowIso,
+            notes: `Upfront payment for ${targetProduct.name} (Ticket ${ticketNum})`,
+            synced: false,
+            lastModified: nowTimestamp,
+            created_at: nowIso
+          };
+          await syncService.queueOperation('wholesalerPayments', 'insert', paymentRecord);
+        }
+
+        toast.success(`Consignment logged for ${wholesaler?.name || 'Wholesaler'} (${isPaid ? 'PAID' : 'PENDING CREDIT'})`);
       }
 
       toast.success(`Attached ${qtyNum}x ${targetProduct.name}`);
       setSelectedProductId("");
       setCustomPartName("");
+      setInventoryUnitCost("");
       setSelectedWholesalerId("");
+      setWholesalerPaid(false);
       setQuantity("1");
     } catch (error: any) {
       toast.error(error.message || "Failed to attach item");
@@ -339,13 +380,16 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
   const totalItemsSum = activePartsTotal + activeProductsTotal;
 
   return (
-    <div className="space-y-4 pt-2">
-      {/* Header & Financial breakdown */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-2">
-        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-          <Layers className="h-4 w-4 text-primary" /> Attached Parts & POS Accessories
-        </Label>
-        <div className="flex items-center gap-3 text-xs">
+    <div className="space-y-4">
+      {/* Header Summary */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b pb-2">
+        <div>
+          <h3 className="text-sm font-semibold flex items-center gap-1.5">
+            <Wrench className="h-4 w-4 text-primary" /> Consumable Parts & Accessories
+          </h3>
+          <p className="text-[11px] text-muted-foreground">Manage replaced components, glass protectors, and sourcing</p>
+        </div>
+        <div className="flex items-center gap-2 text-xs">
           <span className="text-muted-foreground">Parts: <strong className="text-foreground">{formatCurrency(activePartsTotal)}</strong></span>
           <span className="text-muted-foreground">Accessories: <strong className="text-foreground">{formatCurrency(activeProductsTotal)}</strong></span>
           <Badge variant="secondary" className="font-bold text-xs bg-primary/10 text-primary border-primary/20">
@@ -374,7 +418,7 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
           {partSourceMode === 'inventory' ? (
             <div className="sm:col-span-2 space-y-1">
               <Label className="text-xs">Select Inventory Item *</Label>
-              <Select value={selectedProductId} onValueChange={setSelectedProductId}>
+              <Select value={selectedProductId} onValueChange={handleProductSelectChange}>
                 <SelectTrigger className="h-8 text-xs">
                   <SelectValue placeholder="Choose repair part or accessory..." />
                 </SelectTrigger>
@@ -401,17 +445,17 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
 
           <div className="space-y-1">
             <Label className="text-xs flex items-center gap-1">
-              <Truck className="h-3 w-3 text-purple-600" /> Sourced Wholesaler
+              <Truck className="h-3 w-3 text-purple-600" /> Sourced Reseller / Wholesaler
             </Label>
             <Select value={selectedWholesalerId} onValueChange={setSelectedWholesalerId}>
               <SelectTrigger className="h-8 text-xs">
                 <SelectValue placeholder="Select Wholesaler..." />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="none">No Wholesaler</SelectItem>
+                <SelectItem value="none">No Wholesaler (Shop Stock)</SelectItem>
                 {wholesalers.map((w) => (
                   <SelectItem key={w.id} value={w.id}>
-                    {w.name}
+                    {w.name} {w.contact_person ? `(${w.contact_person})` : ''}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -419,15 +463,58 @@ export const TicketPartsManager = ({ ticketId }: TicketPartsManagerProps) => {
           </div>
         </div>
 
-        {partSourceMode === 'custom' && (
-          <div className="grid grid-cols-2 gap-2 pt-1">
-            <div className="space-y-1">
-              <Label className="text-[11px]">Agreed Unit Cost (Wholesaler)</Label>
-              <Input type="number" step="0.01" className="h-7 text-xs font-semibold" value={customUnitCost} onChange={(e) => setCustomUnitCost(e.target.value)} />
-            </div>
+        {/* Cost & Price fields */}
+        <div className="grid grid-cols-2 gap-2 pt-1">
+          <div className="space-y-1">
+            <Label className="text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+              {selectedWholesalerId && selectedWholesalerId !== 'none' ? "Wholesaler Unit Cost" : "Unit Cost Price"}
+            </Label>
+            <Input
+              type="number"
+              step="0.01"
+              className="h-7 text-xs font-semibold"
+              value={partSourceMode === 'custom' ? customUnitCost : inventoryUnitCost}
+              onChange={(e) => partSourceMode === 'custom' ? setCustomUnitCost(e.target.value) : setInventoryUnitCost(e.target.value)}
+              placeholder="0.00"
+            />
+          </div>
+          {partSourceMode === 'custom' && (
             <div className="space-y-1">
               <Label className="text-[11px]">Part Retail Price</Label>
               <Input type="number" step="0.01" className="h-7 text-xs font-semibold" value={customUnitPrice} onChange={(e) => setCustomUnitPrice(e.target.value)} />
+            </div>
+          )}
+        </div>
+
+        {/* Reseller Payment Status Toggle (if wholesaler is selected) */}
+        {selectedWholesalerId && selectedWholesalerId !== 'none' && (
+          <div className="flex items-center justify-between pt-1.5 border-t border-border/60">
+            <Label className="text-[10px] font-medium text-foreground flex items-center gap-1">
+              <DollarSign className="h-3 w-3 text-emerald-600" /> Reseller Payment Status:
+            </Label>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setWholesalerPaid(false)}
+                className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors flex items-center gap-1 ${
+                  !wholesalerPaid
+                    ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800 font-bold'
+                    : 'bg-background text-muted-foreground border-input hover:bg-muted'
+                }`}
+              >
+                <Clock className="h-2.5 w-2.5" /> Unpaid (Credit Consignment)
+              </button>
+              <button
+                type="button"
+                onClick={() => setWholesalerPaid(true)}
+                className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors flex items-center gap-1 ${
+                  wholesalerPaid
+                    ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800 font-bold'
+                    : 'bg-background text-muted-foreground border-input hover:bg-muted'
+                }`}
+              >
+                <CheckCircle2 className="h-2.5 w-2.5" /> Paid in Full
+              </button>
             </div>
           </div>
         )}

@@ -157,32 +157,35 @@ const Reports = () => {
     setFilteredSales(filtered);
   };
 
-  // Date Filtered Repair Tickets, Intakes & Refunds
+  // Date Filtered Repair Tickets, Intakes & Refunds (with immutable date bounds)
+  const startBound = startDate ? new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0).getTime() : null;
+  const endBound = endDate ? new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999).getTime() : null;
+
   const filteredRepairs = repairTickets.filter(t => {
-    const d = new Date(t.created_at || Date.now());
-    if (startDate && d < new Date(startDate.setHours(0,0,0,0))) return false;
-    if (endDate && d > new Date(endDate.setHours(23,59,59,999))) return false;
+    const time = new Date(t.created_at || Date.now()).getTime();
+    if (startBound !== null && time < startBound) return false;
+    if (endBound !== null && time > endBound) return false;
     return true;
   });
 
   const filteredIntakes = wholesalerIntakes.filter(i => {
-    const d = new Date(i.intake_date || i.created_at || Date.now());
-    if (startDate && d < new Date(startDate.setHours(0,0,0,0))) return false;
-    if (endDate && d > new Date(endDate.setHours(23,59,59,999))) return false;
+    const time = new Date(i.intake_date || i.created_at || Date.now()).getTime();
+    if (startBound !== null && time < startBound) return false;
+    if (endBound !== null && time > endBound) return false;
     return true;
   });
 
   const filteredRefunds = refunds.filter(r => {
-    const d = new Date(r.created_at || Date.now());
-    if (startDate && d < new Date(startDate.setHours(0,0,0,0))) return false;
-    if (endDate && d > new Date(endDate.setHours(23,59,59,999))) return false;
+    const time = new Date(r.created_at || Date.now()).getTime();
+    if (startBound !== null && time < startBound) return false;
+    if (endBound !== null && time > endBound) return false;
     return true;
   });
 
   const filteredPayments = wholesalerPayments.filter(p => {
-    const d = new Date(p.payment_date || p.created_at || Date.now());
-    if (startDate && d < new Date(startDate.setHours(0,0,0,0))) return false;
-    if (endDate && d > new Date(endDate.setHours(23,59,59,999))) return false;
+    const time = new Date(p.payment_date || p.created_at || Date.now()).getTime();
+    if (startBound !== null && time < startBound) return false;
+    if (endBound !== null && time > endBound) return false;
     return true;
   });
 
