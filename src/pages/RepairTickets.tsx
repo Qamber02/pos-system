@@ -118,25 +118,50 @@ const RepairTickets = () => {
       }
       await db.repairTicketHistory.where('repair_ticket_id').equals(ticketId).delete();
 
-      // 3. Delete wholesaler intakes associated with this ticket if any
+      // 3. Delete any refunds associated with this ticket
+      const ticketRefunds = await db.refunds.where('repair_ticket_id').equals(ticketId).toArray();
+      for (const r of ticketRefunds) {
+        await syncService.queueOperation('refunds', 'delete', { id: r.id });
+      }
+      await db.refunds.where('repair_ticket_id').equals(ticketId).delete();
+
+      // 4. Delete wholesaler intakes and payments associated with this ticket if any
       const intakes = await db.wholesalerIntakes.toArray();
       const ticketIntakes = intakes.filter(i => (i.notes && (i.notes.includes(ticketToDelete.ticket_number) || i.notes.includes(ticketId.slice(0, 8)))) || (i.item_name && i.item_name.includes(ticketToDelete.ticket_number)));
       for (const intake of ticketIntakes) {
         await syncService.queueOperation('wholesalerIntakes', 'delete', { id: intake.id });
         await db.wholesalerIntakes.delete(intake.id);
+        if (navigator.onLine) {
+          try {
+            await (supabase as any).from('wholesaler_intakes').delete().eq('id', intake.id);
+          } catch { /* sync will retry */ }
+        }
       }
 
-      // 4. Delete the ticket itself
+      const payments = await db.wholesalerPayments.toArray();
+      const ticketPayments = payments.filter(p => p.notes && (p.notes.includes(ticketToDelete.ticket_number) || p.notes.includes(ticketId.slice(0, 8))));
+      for (const payment of ticketPayments) {
+        await syncService.queueOperation('wholesalerPayments', 'delete', { id: payment.id });
+        await db.wholesalerPayments.delete(payment.id);
+        if (navigator.onLine) {
+          try {
+            await (supabase as any).from('wholesaler_payments').delete().eq('id', payment.id);
+          } catch { /* sync will retry */ }
+        }
+      }
+
+      // 5. Delete the ticket itself
       await syncService.queueOperation('repairTickets', 'delete', { id: ticketId });
       await db.repairTickets.delete(ticketId);
 
-      // 5. Cloud delete if online
+      // 6. Direct Cloud delete if online (with proper Supabase table names & casting)
       if (navigator.onLine) {
         try {
-          await supabase.from('repair_ticket_part_history').delete().eq('repair_ticket_id', ticketId);
-          await supabase.from('repair_ticket_parts').delete().eq('repair_ticket_id', ticketId);
-          await supabase.from('repair_ticket_history').delete().eq('repair_ticket_id', ticketId);
-          await supabase.from('repair_tickets').delete().eq('id', ticketId);
+          await (supabase as any).from('repair_ticket_part_history').delete().eq('repair_ticket_id', ticketId);
+          await (supabase as any).from('repair_ticket_parts').delete().eq('repair_ticket_id', ticketId);
+          await (supabase as any).from('repair_ticket_status_history').delete().eq('repair_ticket_id', ticketId);
+          await (supabase as any).from('refunds').delete().eq('repair_ticket_id', ticketId);
+          await (supabase as any).from('repair_tickets').delete().eq('id', ticketId);
         } catch (cloudErr) {
           console.warn('Cloud delete error (sync queue will retry):', cloudErr);
         }
